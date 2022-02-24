@@ -1,8 +1,4 @@
-#![feature(adt_const_params)]
-
 use std::{fmt, fs};
-use std::fmt::{Formatter, write};
-use std::fs::read;
 use std::io::{BufRead, BufReader};
 use std::num::ParseIntError;
 use std::str::FromStr;
@@ -59,6 +55,7 @@ mod tests {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 struct Event<'s> {
     marked: bool,
     layer: i32,
@@ -70,6 +67,7 @@ struct Event<'s> {
     margin_r: Option<u32>,
     margin_v: Option<u32>,
     effect: &'s str,
+    text: &'s str,
 }
 
 #[derive(Default, Debug)]
@@ -121,7 +119,7 @@ fn main() {
 
     let mut current_section = None;
 
-    for (idx, line) in reader.lines().enumerate() {
+    for line in reader.lines() {
         let line = line.unwrap();
 
         if let Some(section) = line.strip_prefix("[") {
@@ -136,7 +134,7 @@ fn main() {
             mapping = dbg!(make_mapping(format));
         } else if let Some(x) = line.strip_prefix("Dialogue: ") {
             let mapping = mapping.as_ref().unwrap();
-            let mut fields = x.splitn(10, ',').collect::<Vec<_>>();
+            let fields = x.splitn(10, ',').collect::<Vec<_>>();
             let line = Event {
                 marked: fields[mapping.marked] == "1",
                 layer: fields[mapping.layer].parse().unwrap(),
@@ -147,9 +145,16 @@ fn main() {
                 margin_l: fields[mapping.margin_l].parse().ok(),
                 margin_r: fields[mapping.margin_r].parse().ok(),
                 margin_v: fields[mapping.margin_v].parse().ok(),
-                effect: fields[mapping.text],
+                effect: fields[mapping.effect],
+                text: fields[mapping.text],
             };
-            println!("{:?}", line);
+
+            match parse(line.text.as_bytes()) {
+                Ok(res) => {
+                    println!("{:?}", res);
+                }
+                Err(r) => todo!("{:?}", r),
+            }
         }
     }
 }
@@ -174,7 +179,7 @@ impl<'d> Reader<'d> {
     }
 
     fn peek(&self) -> Option<u8> {
-        Some(self.buf[self.pos])
+        self.buf.get(self.pos).copied()
     }
 
     fn try_tag(&mut self, tag: &[u8]) -> bool {
@@ -197,106 +202,135 @@ impl<'d> Reader<'d> {
         &self.buf[pos..self.pos]
     }
 
+    #[track_caller]
+    fn read_float(&mut self) -> f32 {
+        let x = self.read_while(|c| matches!(c, b'0'..=b'9' | b'.' | b'-'));
+        let x = std::str::from_utf8(x).unwrap();
+        x.parse().unwrap()
+    }
+
+    fn read_string(&mut self) -> String {
+        let x = self.read_while(|c| c != b'\\');
+        let x = std::str::from_utf8(x).unwrap();
+        x.to_string()
+    }
+
     fn read_number(&mut self) -> u32 {
         let mut n = 0;
         for b in self.read_while(|c| c.is_ascii_digit()).iter().copied() {
             n = n * 10 + (b - b'0') as u32;
         }
-        if self.peek() == Some(b'.') {
-            self.consume();
-        }
-        for b in self.read_while(|c| c.is_ascii_digit()).iter().copied() {
-            n = n * 10 + (b - b'0') as u32;
-        }
-
         n
     }
 
+    fn expect(&mut self, b: u8) -> Result<(), ()> {
+        if self.try_tag(&[b]) {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
     fn dbg(&self) {
-        println!("{:?}", std::str::from_utf8(&self.buf[self.pos..]));
+        println!("!!! {:?}", std::str::from_utf8(&self.buf[self.pos..]));
     }
 }
 
 #[derive(Debug)]
 enum Code {
-    Align(u32),
-    Blur(u32),
-    FontScaleX(u32),
-    FontScaleY(u32),
-    RotateX(u32),
-    RotateY(u32),
-    RotateZ(u32),
+    Align(Alignment),
+    Blur(f32),
+    Border(f32),
+    FontName(String),
+    FontSize(f32),
+    FontScaleX(f32),
+    FontScaleY(f32),
+    RotateX(f32),
+    RotateY(f32),
+    RotateZ(f32),
     Color(Vec<u8>),
     Pos(u32, u32),
-    DrawScale(u32),
+    DrawScale(f32),
     Clip(Vec<DrawCommand>),
 }
 
 #[derive(Debug)]
+struct Alignment(u8);
+
+#[derive(Debug)]
 enum DrawCommand {
-    CloseAndMove(u32, u32),
-    Move(u32, u32),
-    Line(u32, u32),
-    Bezier([(u32, u32); 3]),
+    CloseAndMove(f32, f32),
+    Move(f32, f32),
+    Line(f32, f32),
+    Bezier([(f32, f32); 3]),
 }
 
-fn read_n(reader: &mut Reader) -> (u32, u32) {
-    let x = reader.read_number();
+fn read_n(reader: &mut Reader) -> (f32, f32) {
+    let x = reader.read_float();
     reader.read_while(|c| c.is_ascii_whitespace());
-    let y = reader.read_number();
+    let y = reader.read_float();
     reader.read_while(|c| c.is_ascii_whitespace());
     (x, y)
 }
 
-fn parse_override(s: &[u8]) -> Result<(), ()> {
-    let mut reader = Reader::new(s);
+fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
     let mut items = Vec::new();
     while let Some(x) = reader.peek() {
         match x {
             b'\\' => {
-                reader.consume();
+                reader.expect(b'\\')?;
                 if reader.try_tag(b"an") {
-                    items.push(Code::Align(reader.read_number()));
+                    items.push(Code::Align(Alignment(reader.read_number() as u8)));
                 } else if reader.try_tag(b"blur") {
-                    items.push(Code::Blur(reader.read_number()));
+                    items.push(Code::Blur(reader.read_float()));
+                } else if reader.try_tag(b"bord") {
+                    items.push(Code::Border(reader.read_float()));
+                } else if reader.try_tag(b"fn") {
+                    items.push(Code::FontName(reader.read_string()));
                 } else if reader.try_tag(b"fscx") {
-                    items.push(Code::FontScaleX(reader.read_number()));
+                    items.push(Code::FontScaleX(reader.read_float()));
                 } else if reader.try_tag(b"fscy") {
-                    items.push(Code::FontScaleY(reader.read_number()));
+                    items.push(Code::FontScaleY(reader.read_float()));
+                } else if reader.try_tag(b"fs") {
+                    items.push(Code::FontSize(reader.read_float()));
+                } else if reader.try_tag(b"frx") {
+                    items.push(Code::RotateX(reader.read_float()));
+                } else if reader.try_tag(b"fry") {
+                    items.push(Code::RotateY(reader.read_float()));
                 } else if reader.try_tag(b"frz") {
-                    items.push(Code::RotateZ(reader.read_number()));
+                    items.push(Code::RotateZ(reader.read_float()));
                 } else if reader.try_tag(b"fax") {
-                    items.push(Code::RotateZ(reader.read_number()));
+                    items.push(Code::RotateZ(reader.read_float()));
                 } else if reader.try_tag(b"clip") {
-                    reader.consume();
+                    reader.expect(b'(')?;
                     let mut cmds = Vec::new();
                     loop {
                         match reader.consume().unwrap() {
                             b'm' => {
                                 reader.read_while(|c| c.is_ascii_whitespace());
-                                let (x, y) = read_n(&mut reader);
+                                let (x, y) = read_n(reader);
                                 cmds.push(DrawCommand::CloseAndMove(x, y));
                             }
-                            b'm' => {
+                            b'n' => {
                                 reader.read_while(|c| c.is_ascii_whitespace());
-                                let (x, y) = read_n(&mut reader);
+                                let (x, y) = read_n(reader);
                                 cmds.push(DrawCommand::Move(x, y));
                             }
                             b'l' => {
                                 reader.read_while(|c| c.is_ascii_whitespace());
 
                                 while reader.peek().unwrap().is_ascii_digit() {
-                                    let (x, y) = read_n(&mut reader);
+                                    let (x, y) = read_n(reader);
                                     cmds.push(DrawCommand::Line(x, y));
                                 }
                             }
                             b'b' => {
                                 reader.read_while(|c| c.is_ascii_whitespace());
-                                let p1 = read_n(&mut reader);
+                                let p1 = read_n(reader);
                                 reader.read_while(|c| c.is_ascii_whitespace());
-                                let p2 = read_n(&mut reader);
+                                let p2 = read_n(reader);
                                 reader.read_while(|c| c.is_ascii_whitespace());
-                                let p3 = read_n(&mut reader);
+                                let p3 = read_n(reader);
 
                                 cmds.push(DrawCommand::Bezier([p1, p2, p3]));
                             }
@@ -305,13 +339,19 @@ fn parse_override(s: &[u8]) -> Result<(), ()> {
                         }
                     }
 
-
                     items.push(Code::Clip(cmds));
-                } else if reader.try_tag(b"c") {
-                    reader.consume();
-                    let color = reader.read_while(|c| c != b'&').to_vec();
-                    reader.consume();
-                    items.push(Code::Color(color));
+                } else if reader.try_tag(b"c")
+                    || reader.try_tag(b"1c")
+                    || reader.try_tag(b"2c")
+                    || reader.try_tag(b"3c")
+                    || reader.try_tag(b"4c")
+                    || reader.try_tag(b"1a") {
+
+                    reader.expect(b'&')?;
+                    reader.expect(b'H')?;
+                    let hex = reader.read_while(|c| c.is_ascii_hexdigit()).to_vec();
+                    reader.expect(b'&')?;
+                    items.push(Code::Color(hex));
                 } else if reader.try_tag(b"pos") {
                     reader.consume();
                     let x = reader.read_number();
@@ -321,27 +361,70 @@ fn parse_override(s: &[u8]) -> Result<(), ()> {
 
                     items.push(Code::Pos(x, y));
                 } else if reader.try_tag(b"p") {
-                    items.push(Code::DrawScale(reader.read_number()));
+                    items.push(Code::DrawScale(reader.read_float()));
                 }
             }
-            _ => {
-                reader.dbg();
+            b'}' => {
                 break;
+            }
+            _ => {
+                reader.consume();
             }
         }
     }
-    println!("{:?}", items);
-    Ok(())
+
+    Ok(items)
+}
+
+#[derive(Debug)]
+enum Part {
+    Text(String),
+    Overrides(Vec<Code>),
+}
+
+fn parse(s: &[u8]) -> Result<Vec<Part>, ()> {
+    let mut parts = Vec::new();
+
+    let mut buff = Vec::new();
+    let mut reader = Reader::new(s);
+    while let Some(x) = reader.peek() {
+        match x {
+            b'{' => {
+                if !buff.is_empty() {
+                    parts.push(Part::Text(String::from_utf8_lossy(&buff).into_owned()));
+                }
+
+                reader.expect(b'{')?;
+                let codes = parse_override(&mut reader)?;
+                reader.expect(b'}')?;
+
+                parts.push(Part::Overrides(codes));
+            }
+            b'\\' => {
+                reader.consume();
+                if reader.consume() == Some(b'n') {
+                    buff.push(b'\n');
+                }
+            }
+            _ => {
+                buff.push(reader.consume().unwrap());
+            }
+        }
+    }
+
+    if !buff.is_empty() {
+        parts.push(Part::Text(String::from_utf8_lossy(&buff).into_owned()));
+    }
+
+    Ok(parts)
 }
 
 #[cfg(test)]
 mod tests2 {
-    use crate::parse_override;
+    use crate::parse;
 
     #[test]
-    fn foo() {
-        parse_override(b"\\an7\\blur4\\fscx50\\frz14.5\\fax0.27\\c&H3F343A&\\pos(117.73,1231.33)\\p1\\fscy50\\clip(m 549 1080 l 422 876 759 791 980 735 b 1028 724 1054 712 1059 696 l 1281 1080)\\t(1740,2140,1,\\blur1)");
-
-        //m 1974.9 165.64 b 1974.56 165.28 1974.21 164.92 1973.87 164.56 1973.87 164.22 1973.92 163.9 1974.01 163.58 1974.36 163.94 1974.71 164.31 1975.07 164.68 1975.05 165 1974.99 165.32 1974.9 165.64
+    fn simple_parse() {
+        dbg!(parse(br"{\fs16}This is small text. {\fs28}This is\n large text").unwrap());
     }
 }
