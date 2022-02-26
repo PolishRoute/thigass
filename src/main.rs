@@ -101,7 +101,7 @@ impl Default for LineMapping {
             margin_r: usize::MAX,
             margin_v: usize::MAX,
             effect: usize::MAX,
-            text: usize::MAX
+            text: usize::MAX,
         }
     }
 }
@@ -134,15 +134,23 @@ enum Section {
 }
 
 fn main() {
+    let a = std::time::Instant::now();
     parse_file("ReinForce_Kishuku_Gakkou_no_Juliet_07_BDRip_1920x1080_x264_FLAC.ass");
+    dbg!(a.elapsed());
 }
 
 fn parse_file(path: impl AsRef<Path>) {
-    let reader = BufReader::new(fs::File::open(path).unwrap());
+    let mut reader = BufReader::new(fs::File::open(path).unwrap());
     let mut mapping = None;
     let mut current_section = None;
-    for line in reader.lines() {
-        let line = line.unwrap();
+    let mut buffer = String::new();
+
+    while let Ok(bytes) = reader.read_line(&mut buffer) {
+        if bytes == 0 {
+            break;
+        }
+
+        let line = buffer.trim_end();
 
         if let Some(section) = line.strip_prefix("[") {
             current_section = match section.strip_suffix(']').unwrap() {
@@ -178,6 +186,8 @@ fn parse_file(path: impl AsRef<Path>) {
                 Err(r) => todo!("{:?}", r),
             }
         }
+
+        buffer.clear();
     }
 }
 
