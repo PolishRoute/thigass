@@ -214,16 +214,16 @@ impl<'d> Reader<'d> {
         self.buf.get(self.pos).copied()
     }
 
-    fn try_tag(&mut self, tag: &[u8]) -> bool {
-        if self.buf[self.pos as usize..].starts_with(tag) {
-            self.pos += tag.len();
+    fn try_consume(&mut self, prefix: &[u8]) -> bool {
+        if self.buf[self.pos..].starts_with(prefix) {
+            self.pos += prefix.len();
             true
         } else {
             false
         }
     }
 
-    fn read_while(&mut self, f: impl Fn(u8) -> bool) -> &[u8] {
+    fn take_while(&mut self, f: impl Fn(u8) -> bool) -> &[u8] {
         let pos = self.pos;
         while let Some(p) = self.peek() {
             if !f(p) {
@@ -236,27 +236,27 @@ impl<'d> Reader<'d> {
 
     #[track_caller]
     fn read_float(&mut self) -> f32 {
-        let x = self.read_while(|c| matches!(c, b'0'..=b'9' | b'.' | b'-'));
+        let x = self.take_while(|c| matches!(c, b'0'..=b'9' | b'.' | b'-'));
         let x = std::str::from_utf8(x).unwrap();
         x.parse().unwrap()
     }
 
     fn read_string(&mut self) -> String {
-        let x = self.read_while(|c| c != b'\\');
+        let x = self.take_while(|c| c != b'\\');
         let x = std::str::from_utf8(x).unwrap();
         x.to_string()
     }
 
     fn read_number(&mut self) -> u32 {
         let mut n = 0;
-        for b in self.read_while(|c| c.is_ascii_digit()).iter().copied() {
+        for b in self.take_while(|c| c.is_ascii_digit()).iter().copied() {
             n = n * 10 + (b - b'0') as u32;
         }
         n
     }
 
     fn expect(&mut self, b: u8) -> Result<(), ()> {
-        if self.try_tag(&[b]) {
+        if self.try_consume(&[b]) {
             Ok(())
         } else {
             Err(())
@@ -307,9 +307,9 @@ enum DrawCommand {
 
 fn read_n(reader: &mut Reader) -> (f32, f32) {
     let x = reader.read_float();
-    reader.read_while(|c| c.is_ascii_whitespace());
+    reader.take_while(|c| c.is_ascii_whitespace());
     let y = reader.read_float();
-    reader.read_while(|c| c.is_ascii_whitespace());
+    reader.take_while(|c| c.is_ascii_whitespace());
     (x, y)
 }
 
@@ -319,49 +319,49 @@ fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
         match x {
             b'\\' => {
                 reader.expect(b'\\')?;
-                if reader.try_tag(b"an") {
+                if reader.try_consume(b"an") {
                     items.push(Code::Align(Alignment(reader.read_number() as u8)));
-                } else if reader.try_tag(b"blur") {
+                } else if reader.try_consume(b"blur") {
                     items.push(Code::Blur(reader.read_float()));
-                } else if reader.try_tag(b"bord") {
+                } else if reader.try_consume(b"bord") {
                     items.push(Code::Border(reader.read_float()));
-                } else if reader.try_tag(b"xbord") {
+                } else if reader.try_consume(b"xbord") {
                     items.push(Code::XBorder(reader.read_float()));
-                } else if reader.try_tag(b"ybord") {
+                } else if reader.try_consume(b"ybord") {
                     items.push(Code::YBorder(reader.read_float()));
-                } else if reader.try_tag(b"fn") {
+                } else if reader.try_consume(b"fn") {
                     items.push(Code::FontName(reader.read_string()));
-                } else if reader.try_tag(b"fscx") {
+                } else if reader.try_consume(b"fscx") {
                     items.push(Code::FontScaleX(reader.read_float()));
-                } else if reader.try_tag(b"fscy") {
+                } else if reader.try_consume(b"fscy") {
                     items.push(Code::FontScaleY(reader.read_float()));
-                } else if reader.try_tag(b"fs") {
+                } else if reader.try_consume(b"fs") {
                     items.push(Code::FontSize(reader.read_float()));
-                } else if reader.try_tag(b"frx") {
+                } else if reader.try_consume(b"frx") {
                     items.push(Code::RotateX(reader.read_float()));
-                } else if reader.try_tag(b"fry") {
+                } else if reader.try_consume(b"fry") {
                     items.push(Code::RotateY(reader.read_float()));
-                } else if reader.try_tag(b"frz") {
+                } else if reader.try_consume(b"frz") {
                     items.push(Code::RotateZ(reader.read_float()));
-                } else if reader.try_tag(b"fax") {
+                } else if reader.try_consume(b"fax") {
                     items.push(Code::RotateZ(reader.read_float()));
-                } else if reader.try_tag(b"clip") {
+                } else if reader.try_consume(b"clip") {
                     reader.expect(b'(')?;
                     let mut cmds = Vec::new();
                     loop {
                         match reader.consume().unwrap() {
                             b'm' => {
-                                reader.read_while(|c| c.is_ascii_whitespace());
+                                reader.take_while(|c| c.is_ascii_whitespace());
                                 let (x, y) = read_n(reader);
                                 cmds.push(DrawCommand::CloseAndMove(x, y));
                             }
                             b'n' => {
-                                reader.read_while(|c| c.is_ascii_whitespace());
+                                reader.take_while(|c| c.is_ascii_whitespace());
                                 let (x, y) = read_n(reader);
                                 cmds.push(DrawCommand::Move(x, y));
                             }
                             b'l' => {
-                                reader.read_while(|c| c.is_ascii_whitespace());
+                                reader.take_while(|c| c.is_ascii_whitespace());
 
                                 while reader.peek().unwrap().is_ascii_digit() {
                                     let (x, y) = read_n(reader);
@@ -369,11 +369,11 @@ fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
                                 }
                             }
                             b'b' => {
-                                reader.read_while(|c| c.is_ascii_whitespace());
+                                reader.take_while(|c| c.is_ascii_whitespace());
                                 let p1 = read_n(reader);
-                                reader.read_while(|c| c.is_ascii_whitespace());
+                                reader.take_while(|c| c.is_ascii_whitespace());
                                 let p2 = read_n(reader);
-                                reader.read_while(|c| c.is_ascii_whitespace());
+                                reader.take_while(|c| c.is_ascii_whitespace());
                                 let p3 = read_n(reader);
 
                                 cmds.push(DrawCommand::Bezier([p1, p2, p3]));
@@ -384,21 +384,21 @@ fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
                     }
 
                     items.push(Code::Clip(cmds));
-                } else if reader.try_tag(b"c")
-                    || reader.try_tag(b"1c")
-                    || reader.try_tag(b"2c")
-                    || reader.try_tag(b"3c")
-                    || reader.try_tag(b"4c")
-                    || reader.try_tag(b"1a")
-                    || reader.try_tag(b"3a")
-                    || reader.try_tag(b"4a")
-                    || reader.try_tag(b"alpha") {
+                } else if reader.try_consume(b"c")
+                    || reader.try_consume(b"1c")
+                    || reader.try_consume(b"2c")
+                    || reader.try_consume(b"3c")
+                    || reader.try_consume(b"4c")
+                    || reader.try_consume(b"1a")
+                    || reader.try_consume(b"3a")
+                    || reader.try_consume(b"4a")
+                    || reader.try_consume(b"alpha") {
                     reader.expect(b'&')?;
                     reader.expect(b'H')?;
-                    let hex = reader.read_while(|c| c.is_ascii_hexdigit()).to_vec();
+                    let hex = reader.take_while(|c| c.is_ascii_hexdigit()).to_vec();
                     reader.expect(b'&')?;
                     items.push(Code::Color(hex));
-                } else if reader.try_tag(b"pos") {
+                } else if reader.try_consume(b"pos") {
                     reader.consume();
                     let x = reader.read_number();
                     reader.consume();
@@ -406,23 +406,23 @@ fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
                     reader.consume();
 
                     items.push(Code::Pos(x, y));
-                } else if reader.try_tag(b"p") {
+                } else if reader.try_consume(b"p") {
                     items.push(Code::DrawScale(reader.read_float()));
-                } else if reader.try_tag(b"b") {
+                } else if reader.try_consume(b"b") {
                     items.push(Code::Bold(reader.consume().unwrap() == b'1'));
-                } else if reader.try_tag(b"shad") {
+                } else if reader.try_consume(b"shad") {
                     items.push(Code::Shadow(reader.read_number()));
-                } else if reader.try_tag(b"t") || reader.try_tag(b"fad") || reader.try_tag(b"move") {
+                } else if reader.try_consume(b"t") || reader.try_consume(b"fad") || reader.try_consume(b"move") {
                     reader.expect(b'(')?;
-                    let _x = reader.read_while(|b| b != b')');
+                    let _x = reader.take_while(|b| b != b')');
                     reader.expect(b')')?;
-                } else if reader.try_tag(b"xshad") {
+                } else if reader.try_consume(b"xshad") {
                     items.push(Code::XShadow(reader.read_number()));
-                } else if reader.try_tag(b"yshad") {
+                } else if reader.try_consume(b"yshad") {
                     items.push(Code::YShadow(reader.read_number()));
-                } else if reader.try_tag(b"q") {
+                } else if reader.try_consume(b"q") {
                     items.push(Code::WrappingStyle(reader.read_number()));
-                } else if reader.try_tag(b"r") {
+                } else if reader.try_consume(b"r") {
                     items.push(Code::Reset);
                 } else {
                     reader.dbg();
