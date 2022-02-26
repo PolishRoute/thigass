@@ -1,9 +1,8 @@
 use std::{fmt, fs};
-use std::fs::read;
 use std::io::{BufRead, BufReader};
 use std::num::ParseIntError;
+use std::path::Path;
 use std::str::FromStr;
-
 
 struct Timestamp {
     value: u64,
@@ -38,7 +37,10 @@ impl FromStr for Timestamp {
         let mut parts = s.splitn(3, ':');
         let hours: u64 = parts.next().ok_or_else(|| TimestampError::Todo)?.parse()?;
         let minutes: u64 = parts.next().ok_or_else(|| TimestampError::Todo)?.parse()?;
-        let (seconds, hundredths) = parts.next().ok_or_else(|| TimestampError::Todo)?.split_once('.').ok_or_else(|| TimestampError::Todo)?;
+        let (seconds, hundredths) = parts.next()
+            .ok_or_else(|| TimestampError::Todo)?
+            .split_once('.')
+            .ok_or_else(|| TimestampError::Todo)?;
         let seconds: u64 = seconds.parse()?;
         let hundredths: u64 = hundredths.parse()?;
         Ok(Timestamp { value: hours * 360000u64 + minutes * 6000u64 + seconds * 100u64 + hundredths })
@@ -47,7 +49,7 @@ impl FromStr for Timestamp {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Timestamp};
+    use crate::Timestamp;
 
     #[test]
     fn foo() {
@@ -71,7 +73,7 @@ struct Event<'s> {
     text: &'s str,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 struct LineMapping {
     marked: usize,
     layer: usize,
@@ -84,6 +86,24 @@ struct LineMapping {
     margin_v: usize,
     effect: usize,
     text: usize,
+}
+
+impl Default for LineMapping {
+    fn default() -> Self {
+        LineMapping {
+            marked: usize::MAX,
+            layer: usize::MAX,
+            start: usize::MAX,
+            end: usize::MAX,
+            style: usize::MAX,
+            name: usize::MAX,
+            margin_l: usize::MAX,
+            margin_r: usize::MAX,
+            margin_v: usize::MAX,
+            effect: usize::MAX,
+            text: usize::MAX
+        }
+    }
 }
 
 fn make_mapping(config: &str) -> Option<LineMapping> {
@@ -114,12 +134,13 @@ enum Section {
 }
 
 fn main() {
-    let reader = BufReader::new(fs::File::open("ReinForce_Kishuku_Gakkou_no_Juliet_07_BDRip_1920x1080_x264_FLAC.ass").unwrap());
+    parse_file("ReinForce_Kishuku_Gakkou_no_Juliet_07_BDRip_1920x1080_x264_FLAC.ass");
+}
 
+fn parse_file(path: impl AsRef<Path>) {
+    let reader = BufReader::new(fs::File::open(path).unwrap());
     let mut mapping = None;
-
     let mut current_section = None;
-
     for line in reader.lines() {
         let line = line.unwrap();
 
@@ -132,12 +153,12 @@ fn main() {
             if current_section != Some(Section::Events) {
                 continue;
             }
-            mapping = dbg!(make_mapping(format));
+            mapping = make_mapping(format);
         } else if let Some(x) = line.strip_prefix("Dialogue: ") {
             let mapping = mapping.as_ref().unwrap();
             let fields = x.splitn(10, ',').collect::<Vec<_>>();
             let line = Event {
-                marked: fields[mapping.marked] == "1",
+                marked: fields.get(mapping.marked) == Some(&"1"),
                 layer: fields[mapping.layer].parse().unwrap(),
                 start: fields[mapping.start].parse().unwrap(),
                 end: fields[mapping.end].parse().unwrap(),
@@ -151,7 +172,7 @@ fn main() {
             };
 
             match parse(line.text.as_bytes()) {
-                Ok(res) => {
+                Ok(_res) => {
                     // println!("{:?}", res);
                 }
                 Err(r) => todo!("{:?}", r),
@@ -383,7 +404,7 @@ fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
                     items.push(Code::Shadow(reader.read_number()));
                 } else if reader.try_tag(b"t") || reader.try_tag(b"fad") || reader.try_tag(b"move") {
                     reader.expect(b'(')?;
-                    let x = reader.read_while(|b| b != b')');
+                    let _x = reader.read_while(|b| b != b')');
                     reader.expect(b')')?;
                 } else if reader.try_tag(b"xshad") {
                     items.push(Code::XShadow(reader.read_number()));
