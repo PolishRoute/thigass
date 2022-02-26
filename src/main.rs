@@ -1,4 +1,5 @@
 use std::{fmt, fs};
+use std::fs::read;
 use std::io::{BufRead, BufReader};
 use std::num::ParseIntError;
 use std::path::Path;
@@ -130,7 +131,8 @@ fn make_mapping(config: &str) -> Option<LineMapping> {
 
 #[derive(Eq, PartialEq)]
 enum Section {
-    Events
+    Events,
+    ScriptInto,
 }
 
 fn main() {
@@ -145,16 +147,18 @@ fn parse_file(path: impl AsRef<Path>) {
     let mut current_section = None;
     let mut buffer = String::new();
 
-    while let Ok(bytes) = reader.read_line(&mut buffer) {
-        if bytes == 0 {
-            break;
-        }
-
-        let line = buffer.trim_end();
+    loop {
+        buffer.clear();
+        let line = match reader.read_line(&mut buffer) {
+            Ok(0) => break,
+            Ok(_) => buffer.trim_end(),
+            Err(e) => panic!("{:?}", e),
+        };
 
         if let Some(section) = line.strip_prefix("[") {
             current_section = match section.strip_suffix(']').unwrap() {
                 "Events" => Some(Section::Events),
+                "Script Info" => Some(Section::ScriptInto),
                 _ => None,
             };
         } else if let Some(format) = line.strip_prefix("Format: ") {
@@ -180,11 +184,19 @@ fn parse_file(path: impl AsRef<Path>) {
             };
 
             match parse(line.text.as_bytes()) {
-                Ok(_res) => {
+                Ok(res) => {
                     // println!("{:?}", res);
                 }
                 Err(r) => todo!("{:?}", r),
             }
+        } else if let Some(x) = line.strip_prefix("Comment: ") {
+            // TODO
+        } else if let Some((name, value)) = line.split_once(": ") {
+            println!("{} = {}", name, value);
+        } else if line.starts_with(";") {
+            continue;
+        } else {
+            println!(">> {}", line);
         }
 
         buffer.clear();
@@ -414,7 +426,7 @@ fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
                     items.push(Code::Shadow(reader.read_number()));
                 } else if reader.try_consume(b"t") || reader.try_consume(b"fad") || reader.try_consume(b"move") {
                     reader.expect(b'(')?;
-                    let _x = reader.take_while(|b| b != b')');
+                    let x = reader.take_while(|b| b != b')');
                     reader.expect(b')')?;
                 } else if reader.try_consume(b"xshad") {
                     items.push(Code::XShadow(reader.read_number()));
