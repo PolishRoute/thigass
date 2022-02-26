@@ -209,7 +209,19 @@ impl FromStr for Color {
                 b: u8::from_str_radix(&s[4..6], 16).unwrap(),
                 a: u8::from_str_radix(&s[6..8], 16).unwrap(),
             },
-            oth => todo!("{}", oth),
+            6 => Color {
+                r: u8::from_str_radix(&s[0..2], 16).unwrap(),
+                g: u8::from_str_radix(&s[2..4], 16).unwrap(),
+                b: u8::from_str_radix(&s[4..6], 16).unwrap(),
+                a: 255,
+            },
+            2 => Color {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: u8::from_str_radix(&s[0..2], 16).unwrap()
+            },
+            _ => todo!("{}", s),
         })
     }
 }
@@ -499,7 +511,7 @@ enum Code {
     RotateX(f32),
     RotateY(f32),
     RotateZ(f32),
-    Color(Vec<u8>),
+    Color(Color),
     Pos(u32, u32),
     DrawScale(f32),
     Clip(Vec<DrawCommand>),
@@ -612,9 +624,10 @@ fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
                     || reader.try_consume(b"alpha") {
                     reader.expect(b'&')?;
                     reader.expect(b'H')?;
-                    let hex = reader.take_while(|c| c.is_ascii_hexdigit()).to_vec();
+                    let hex = reader.take_while(|c| c.is_ascii_hexdigit());
+                    let c = std::str::from_utf8(hex).unwrap().parse().unwrap();
                     reader.expect(b'&')?;
-                    items.push(Code::Color(hex));
+                    items.push(Code::Color(c));
                 } else if reader.try_consume(b"pos") {
                     reader.consume();
                     let x = reader.read_number();
