@@ -381,7 +381,6 @@ fn parse_file(path: impl AsRef<Path>) {
         } else if let Some(s) = line.strip_prefix("Style: ") {
             let mapping = styles_mapping.as_ref().unwrap();
             let fields = s.split(',').collect::<Vec<_>>();
-            dbg!(&fields);
             let style = Style {
                 name: fields[mapping.name].to_string(),
                 font_name: fields[mapping.font_name].parse().unwrap(),
@@ -407,7 +406,7 @@ fn parse_file(path: impl AsRef<Path>) {
                 margin_v: fields[mapping.margin_v].parse().unwrap(),
                 encoding: (),
             };
-            styles.push(dbg!(style));
+            styles.push(style);
         } else if let Some((name, value)) = line.split_once(": ") {
             println!("{} = {}", name, value);
         } else if line.starts_with(";") {
@@ -452,7 +451,7 @@ impl<'d> Reader<'d> {
         }
     }
 
-    fn take_while(&mut self, f: impl Fn(u8) -> bool) -> &[u8] {
+    fn take_while(&mut self, f: impl Fn(u8) -> bool) -> &'d [u8] {
         let pos = self.pos;
         while let Some(p) = self.peek() {
             if !f(p) {
@@ -521,7 +520,9 @@ enum Code {
     YShadow(u32),
     WrappingStyle(u32),
     Reset,
-    Transition { t1: u32, t2: u32, accel: Option<f32>, style: String },
+    Transition { t1: Option<f32>, t2: Option<f32>, accel: Option<f32>, style: Vec<Code> },
+    Fade { t1: f32, t2: f32 },
+    Move { x1: f32, y1: f32, x2: f32, y2: f32, t1: f32, t2: f32 },
 }
 
 #[derive(Debug)]
@@ -543,149 +544,185 @@ fn read_n(reader: &mut Reader) -> (f32, f32) {
     (x, y)
 }
 
-fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
+fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<Vec<&'a str>, ()> {
+    reader.expect(b'(')?;
+    let args: Vec<&'a str> = reader
+        .take_while(|b| b != b')')
+        .split(|b| *b == b',')
+        .map(|it| std::str::from_utf8(it).unwrap())
+        .collect();
+    reader.expect(b')')?;
+    Ok(args)
+}
+
+fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
+    reader.expect(b'\\')?;
+    Ok(if reader.try_consume(b"an") {
+        Code::Align(Alignment(reader.read_number() as u8))
+    } else if reader.try_consume(b"blur") {
+        Code::Blur(reader.read_float())
+    } else if reader.try_consume(b"bord") {
+        Code::Border(reader.read_float())
+    } else if reader.try_consume(b"xbord") {
+        Code::XBorder(reader.read_float())
+    } else if reader.try_consume(b"ybord") {
+        Code::YBorder(reader.read_float())
+    } else if reader.try_consume(b"fn") {
+        Code::FontName(reader.read_string())
+    } else if reader.try_consume(b"fscx") {
+        Code::FontScaleX(reader.read_float())
+    } else if reader.try_consume(b"fscy") {
+        Code::FontScaleY(reader.read_float())
+    } else if reader.try_consume(b"fs") {
+        Code::FontSize(reader.read_float())
+    } else if reader.try_consume(b"frx") {
+        Code::RotateX(reader.read_float())
+    } else if reader.try_consume(b"fry") {
+        Code::RotateY(reader.read_float())
+    } else if reader.try_consume(b"frz") {
+        Code::RotateZ(reader.read_float())
+    } else if reader.try_consume(b"fax") {
+        Code::RotateZ(reader.read_float())
+    } else if reader.try_consume(b"clip") {
+        reader.expect(b'(')?;
+        let mut cmds = Vec::new();
+        loop {
+            match reader.consume().unwrap() {
+                b'm' => {
+                    reader.take_while(|c| c.is_ascii_whitespace());
+                    let (x, y) = read_n(reader);
+                    cmds.push(DrawCommand::CloseAndMove(x, y));
+                }
+                b'n' => {
+                    reader.take_while(|c| c.is_ascii_whitespace());
+                    let (x, y) = read_n(reader);
+                    cmds.push(DrawCommand::Move(x, y));
+                }
+                b'l' => {
+                    reader.take_while(|c| c.is_ascii_whitespace());
+
+                    while reader.peek().unwrap().is_ascii_digit() {
+                        let (x, y) = read_n(reader);
+                        cmds.push(DrawCommand::Line(x, y));
+                    }
+                }
+                b'b' => {
+                    reader.take_while(|c| c.is_ascii_whitespace());
+                    let p1 = read_n(reader);
+                    reader.take_while(|c| c.is_ascii_whitespace());
+                    let p2 = read_n(reader);
+                    reader.take_while(|c| c.is_ascii_whitespace());
+                    let p3 = read_n(reader);
+
+                    cmds.push(DrawCommand::Bezier([p1, p2, p3]));
+                }
+                b')' => break,
+                _ => (),
+            }
+        }
+
+        Code::Clip(cmds)
+    } else if reader.try_consume(b"c")
+        || reader.try_consume(b"1c")
+        || reader.try_consume(b"2c")
+        || reader.try_consume(b"3c")
+        || reader.try_consume(b"4c")
+        || reader.try_consume(b"1a")
+        || reader.try_consume(b"3a")
+        || reader.try_consume(b"4a")
+        || reader.try_consume(b"alpha") {
+        reader.expect(b'&')?;
+        reader.expect(b'H')?;
+        let hex = reader.take_while(|c| c.is_ascii_hexdigit());
+        let c = std::str::from_utf8(hex).unwrap().parse().unwrap();
+        reader.expect(b'&')?;
+        Code::Color(c)
+    } else if reader.try_consume(b"pos") {
+        reader.consume();
+        let x = reader.read_number();
+        reader.consume();
+        let y = reader.read_number();
+        reader.consume();
+
+        Code::Pos(x, y)
+    } else if reader.try_consume(b"p") {
+        Code::DrawScale(reader.read_float())
+    } else if reader.try_consume(b"b") {
+        Code::Bold(reader.consume().unwrap() == b'1')
+    } else if reader.try_consume(b"shad") {
+        Code::Shadow(reader.read_number())
+    } else if reader.try_consume(b"t") {
+        let args = parse_args(reader)?;
+        match args.len() {
+            4 => {
+                let t1: f32 = args[0].parse().unwrap();
+                let t2: f32 = args[1].parse().unwrap();
+                let accel: f32 = args[2].parse().unwrap();
+                let style = read_style(args[3].as_bytes())?;
+                Code::Transition { t1:Some(t1), t2: Some(t2), accel: Some(accel), style }
+            }
+            3 => {
+                let t1: f32 = args[0].parse().unwrap();
+                let t2: f32 = args[1].parse().unwrap();
+                let style = read_style(args[2].as_bytes())?;
+                Code::Transition { t1:Some(t1), t2: Some(t2), accel: None, style }
+            }
+            1 => {
+                let style = read_style(args[0].as_bytes())?;
+                Code::Transition { t1: None, t2:None, accel: None, style }
+            }
+            _ => unimplemented!("t: {:?}", args),
+        }
+    } else if reader.try_consume(b"fad") {
+        let args = parse_args(reader)?;
+        match args.len() {
+            2 => {
+                let t1: f32 = args[0].parse().unwrap();
+                let t2: f32 = args[0].parse().unwrap();
+                Code::Fade { t1, t2 }
+            }
+            _ => todo!("{:?}", args),
+        }
+    } else if reader.try_consume(b"move") {
+        let args = parse_args(reader)?;
+        match args.len() {
+            6 => {
+                let x1 = args[0].parse().unwrap();
+                let y1 = args[1].parse().unwrap();
+                let x2 = args[2].parse().unwrap();
+                let y2 = args[3].parse().unwrap();
+                let t1 = args[4].parse().unwrap();
+                let t2 = args[4].parse().unwrap();
+
+                Code::Move { x1, y1, x2, y2, t1, t2 }
+            }
+            _ => todo!("{:?}", args)
+        }
+    } else if reader.try_consume(b"xshad") {
+        Code::XShadow(reader.read_number())
+    } else if reader.try_consume(b"yshad") {
+        Code::YShadow(reader.read_number())
+    } else if reader.try_consume(b"q") {
+        Code::WrappingStyle(reader.read_number())
+    } else if reader.try_consume(b"r") {
+        Code::Reset
+    } else {
+        reader.dbg();
+        return Err(());
+    })
+}
+
+fn read_style(s: &[u8]) -> Result<Vec<Code>, ()> {
+    let mut reader = Reader::new(s);
+    parse_overrides(&mut reader)
+}
+
+fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ()> {
     let mut items = Vec::new();
     while let Some(x) = reader.peek() {
         match x {
             b'\\' => {
-                reader.expect(b'\\')?;
-                if reader.try_consume(b"an") {
-                    items.push(Code::Align(Alignment(reader.read_number() as u8)));
-                } else if reader.try_consume(b"blur") {
-                    items.push(Code::Blur(reader.read_float()));
-                } else if reader.try_consume(b"bord") {
-                    items.push(Code::Border(reader.read_float()));
-                } else if reader.try_consume(b"xbord") {
-                    items.push(Code::XBorder(reader.read_float()));
-                } else if reader.try_consume(b"ybord") {
-                    items.push(Code::YBorder(reader.read_float()));
-                } else if reader.try_consume(b"fn") {
-                    items.push(Code::FontName(reader.read_string()));
-                } else if reader.try_consume(b"fscx") {
-                    items.push(Code::FontScaleX(reader.read_float()));
-                } else if reader.try_consume(b"fscy") {
-                    items.push(Code::FontScaleY(reader.read_float()));
-                } else if reader.try_consume(b"fs") {
-                    items.push(Code::FontSize(reader.read_float()));
-                } else if reader.try_consume(b"frx") {
-                    items.push(Code::RotateX(reader.read_float()));
-                } else if reader.try_consume(b"fry") {
-                    items.push(Code::RotateY(reader.read_float()));
-                } else if reader.try_consume(b"frz") {
-                    items.push(Code::RotateZ(reader.read_float()));
-                } else if reader.try_consume(b"fax") {
-                    items.push(Code::RotateZ(reader.read_float()));
-                } else if reader.try_consume(b"clip") {
-                    reader.expect(b'(')?;
-                    let mut cmds = Vec::new();
-                    loop {
-                        match reader.consume().unwrap() {
-                            b'm' => {
-                                reader.take_while(|c| c.is_ascii_whitespace());
-                                let (x, y) = read_n(reader);
-                                cmds.push(DrawCommand::CloseAndMove(x, y));
-                            }
-                            b'n' => {
-                                reader.take_while(|c| c.is_ascii_whitespace());
-                                let (x, y) = read_n(reader);
-                                cmds.push(DrawCommand::Move(x, y));
-                            }
-                            b'l' => {
-                                reader.take_while(|c| c.is_ascii_whitespace());
-
-                                while reader.peek().unwrap().is_ascii_digit() {
-                                    let (x, y) = read_n(reader);
-                                    cmds.push(DrawCommand::Line(x, y));
-                                }
-                            }
-                            b'b' => {
-                                reader.take_while(|c| c.is_ascii_whitespace());
-                                let p1 = read_n(reader);
-                                reader.take_while(|c| c.is_ascii_whitespace());
-                                let p2 = read_n(reader);
-                                reader.take_while(|c| c.is_ascii_whitespace());
-                                let p3 = read_n(reader);
-
-                                cmds.push(DrawCommand::Bezier([p1, p2, p3]));
-                            }
-                            b')' => break,
-                            _ => (),
-                        }
-                    }
-
-                    items.push(Code::Clip(cmds));
-                } else if reader.try_consume(b"c")
-                    || reader.try_consume(b"1c")
-                    || reader.try_consume(b"2c")
-                    || reader.try_consume(b"3c")
-                    || reader.try_consume(b"4c")
-                    || reader.try_consume(b"1a")
-                    || reader.try_consume(b"3a")
-                    || reader.try_consume(b"4a")
-                    || reader.try_consume(b"alpha") {
-                    reader.expect(b'&')?;
-                    reader.expect(b'H')?;
-                    let hex = reader.take_while(|c| c.is_ascii_hexdigit());
-                    let c = std::str::from_utf8(hex).unwrap().parse().unwrap();
-                    reader.expect(b'&')?;
-                    items.push(Code::Color(c));
-                } else if reader.try_consume(b"pos") {
-                    reader.consume();
-                    let x = reader.read_number();
-                    reader.consume();
-                    let y = reader.read_number();
-                    reader.consume();
-
-                    items.push(Code::Pos(x, y));
-                } else if reader.try_consume(b"p") {
-                    items.push(Code::DrawScale(reader.read_float()));
-                } else if reader.try_consume(b"b") {
-                    items.push(Code::Bold(reader.consume().unwrap() == b'1'));
-                } else if reader.try_consume(b"shad") {
-                    items.push(Code::Shadow(reader.read_number()));
-                } else if reader.try_consume(b"t") {
-                    reader.expect(b'(')?;
-                    let args: Vec<&str> = reader
-                        .take_while(|b| b != b')')
-                        .split(|b| *b == b',')
-                        .map(|it| std::str::from_utf8(it).unwrap())
-                        .collect();
-
-                    let item = match args.len() {
-                        4 => {
-                            let t1: u32 = args[0].parse().unwrap();
-                            let t2: u32 = args[1].parse().unwrap();
-                            let accel: f32 = args[2].parse().unwrap();
-                            let style = args[3];
-                            Code::Transition { t1, t2, accel: Some(accel), style: style.to_string() }
-                        }
-                        3 => {
-                            let t1: u32 = args[0].parse().unwrap();
-                            let t2: u32 = args[1].parse().unwrap();
-                            let style = args[2];
-                            Code::Transition { t1, t2, accel: None, style: style.to_string() }
-                        }
-                        _ => {
-                            todo!("{:?}", args);
-                        }
-                    };
-                    items.push(item);
-                } else if reader.try_consume(b"fad") || reader.try_consume(b"move") {
-                    reader.expect(b'(')?;
-                    let x = reader.take_while(|b| b != b')');
-                    reader.expect(b')')?;
-                } else if reader.try_consume(b"xshad") {
-                    items.push(Code::XShadow(reader.read_number()));
-                } else if reader.try_consume(b"yshad") {
-                    items.push(Code::YShadow(reader.read_number()));
-                } else if reader.try_consume(b"q") {
-                    items.push(Code::WrappingStyle(reader.read_number()));
-                } else if reader.try_consume(b"r") {
-                    items.push(Code::Reset);
-                } else {
-                    reader.dbg();
-                    return Err(());
-                }
+                items.push(parse_override(reader)?);
             }
             b'}' => {
                 break;
@@ -718,7 +755,7 @@ fn parse(s: &[u8]) -> Result<Vec<Part>, ()> {
                 }
 
                 reader.expect(b'{')?;
-                let codes = parse_override(&mut reader)?;
+                let codes = parse_overrides(&mut reader)?;
                 reader.expect(b'}')?;
 
                 parts.push(Part::Overrides(codes));
