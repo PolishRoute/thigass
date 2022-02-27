@@ -338,7 +338,11 @@ fn parse_file(path: impl AsRef<Path>) {
 
         match parse(line.text.as_bytes()) {
             Ok(res) => {
-                // println!("{:?}", res);
+                for p in res {
+                    if let Part::Text(t) = p {
+                        println!("{}", t);
+                    }
+                }
             }
             Err(r) => todo!("{:?}", r),
         }
@@ -408,7 +412,7 @@ fn parse_file(path: impl AsRef<Path>) {
             };
             styles.push(style);
         } else if let Some((name, value)) = line.split_once(": ") {
-            println!("{} = {}", name, value);
+            // println!("{} = {}", name, value);
         } else if line.starts_with(";") {
             continue;
         } else {
@@ -515,6 +519,7 @@ enum Code {
     Pos(f32, f32),
     DrawScale(f32),
     Clip(Vec<DrawCommand>),
+    ClipRect(f32, f32, f32, f32),
     Bold(bool),
     Shadow(f32),
     XShadow(f32),
@@ -556,6 +561,48 @@ fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<Vec<&'a str>, ()> {
     Ok(args)
 }
 
+fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ()> {
+    let mut cmds = Vec::new();
+    while let Some(c) = reader.peek() {
+        match c {
+            b'm' => {
+                reader.expect(b'm')?;
+                reader.take_while(|c| c.is_ascii_whitespace());
+                let (x, y) = read_n(reader);
+                cmds.push(DrawCommand::CloseAndMove(x, y));
+            }
+            b'n' => {
+                reader.expect(b'n')?;
+                reader.take_while(|c| c.is_ascii_whitespace());
+                let (x, y) = read_n(reader);
+                cmds.push(DrawCommand::Move(x, y));
+            }
+            b'l' => {
+                reader.expect(b'l')?;
+                reader.take_while(|c| c.is_ascii_whitespace());
+
+                while reader.peek().unwrap().is_ascii_digit() {
+                    let (x, y) = read_n(reader);
+                    cmds.push(DrawCommand::Line(x, y));
+                }
+            }
+            b'b' => {
+                reader.expect(b'b')?;
+                reader.take_while(|c| c.is_ascii_whitespace());
+                let p1 = read_n(reader);
+                reader.take_while(|c| c.is_ascii_whitespace());
+                let p2 = read_n(reader);
+                reader.take_while(|c| c.is_ascii_whitespace());
+                let p3 = read_n(reader);
+
+                cmds.push(DrawCommand::Bezier([p1, p2, p3]));
+            }
+            _ => break,
+        }
+    }
+    Ok(cmds)
+}
+
 fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
     reader.expect(b'\\')?;
     Ok(if reader.try_consume(b"an") {
@@ -585,44 +632,21 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
     } else if reader.try_consume(b"fax") {
         Code::RotateZ(reader.read_float())
     } else if reader.try_consume(b"clip") {
-        reader.expect(b'(')?;
-        let mut cmds = Vec::new();
-        loop {
-            match reader.consume().unwrap() {
-                b'm' => {
-                    reader.take_while(|c| c.is_ascii_whitespace());
-                    let (x, y) = read_n(reader);
-                    cmds.push(DrawCommand::CloseAndMove(x, y));
-                }
-                b'n' => {
-                    reader.take_while(|c| c.is_ascii_whitespace());
-                    let (x, y) = read_n(reader);
-                    cmds.push(DrawCommand::Move(x, y));
-                }
-                b'l' => {
-                    reader.take_while(|c| c.is_ascii_whitespace());
-
-                    while reader.peek().unwrap().is_ascii_digit() {
-                        let (x, y) = read_n(reader);
-                        cmds.push(DrawCommand::Line(x, y));
-                    }
-                }
-                b'b' => {
-                    reader.take_while(|c| c.is_ascii_whitespace());
-                    let p1 = read_n(reader);
-                    reader.take_while(|c| c.is_ascii_whitespace());
-                    let p2 = read_n(reader);
-                    reader.take_while(|c| c.is_ascii_whitespace());
-                    let p3 = read_n(reader);
-
-                    cmds.push(DrawCommand::Bezier([p1, p2, p3]));
-                }
-                b')' => break,
-                _ => (),
+        let args = parse_args(reader)?;
+        match args.len() {
+            1 => {
+                let cmds = parse_curve(reader)?;
+                Code::Clip(cmds)
             }
+            4 => {
+                let x1 = args[0].parse().unwrap();
+                let y1 = args[1].parse().unwrap();
+                let x2 = args[2].parse().unwrap();
+                let y2 = args[3].parse().unwrap();
+                Code::ClipRect(x1, y1, x2, y2)
+            }
+            _ => todo!("{:?}", args)
         }
-
-        Code::Clip(cmds)
     } else if reader.try_consume(b"pos") {
         reader.consume();
         let x = reader.read_float();
