@@ -510,7 +510,8 @@ enum Code {
     RotateX(f32),
     RotateY(f32),
     RotateZ(f32),
-    Color(Color),
+    Color(Option<u32>, Color),
+    Alpha(Option<u32>, u8),
     Pos(u32, u32),
     DrawScale(f32),
     Clip(Vec<DrawCommand>),
@@ -622,21 +623,6 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
         }
 
         Code::Clip(cmds)
-    } else if reader.try_consume(b"c")
-        || reader.try_consume(b"1c")
-        || reader.try_consume(b"2c")
-        || reader.try_consume(b"3c")
-        || reader.try_consume(b"4c")
-        || reader.try_consume(b"1a")
-        || reader.try_consume(b"3a")
-        || reader.try_consume(b"4a")
-        || reader.try_consume(b"alpha") {
-        reader.expect(b'&')?;
-        reader.expect(b'H')?;
-        let hex = reader.take_while(|c| c.is_ascii_hexdigit());
-        let c = std::str::from_utf8(hex).unwrap().parse().unwrap();
-        reader.expect(b'&')?;
-        Code::Color(c)
     } else if reader.try_consume(b"pos") {
         reader.consume();
         let x = reader.read_number();
@@ -659,17 +645,17 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
                 let t2: f32 = args[1].parse().unwrap();
                 let accel: f32 = args[2].parse().unwrap();
                 let style = read_style(args[3].as_bytes())?;
-                Code::Transition { t1:Some(t1), t2: Some(t2), accel: Some(accel), style }
+                Code::Transition { t1: Some(t1), t2: Some(t2), accel: Some(accel), style }
             }
             3 => {
                 let t1: f32 = args[0].parse().unwrap();
                 let t2: f32 = args[1].parse().unwrap();
                 let style = read_style(args[2].as_bytes())?;
-                Code::Transition { t1:Some(t1), t2: Some(t2), accel: None, style }
+                Code::Transition { t1: Some(t1), t2: Some(t2), accel: None, style }
             }
             1 => {
                 let style = read_style(args[0].as_bytes())?;
-                Code::Transition { t1: None, t2:None, accel: None, style }
+                Code::Transition { t1: None, t2: None, accel: None, style }
             }
             _ => unimplemented!("t: {:?}", args),
         }
@@ -706,10 +692,37 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
         Code::WrappingStyle(reader.read_number())
     } else if reader.try_consume(b"r") {
         Code::Reset
+    } else if reader.try_consume(b"c") {
+        Code::Color(None, parse_color(reader)?)
+    } else if reader.try_consume(b"alpha") {
+        Code::Alpha(None, parse_alpha(reader)?)
+    } else if let Some(b'0'..=b'9') = reader.peek() {
+        let n = reader.read_number();
+        match reader.consume() {
+            Some(b'c') => Code::Color(Some(n), parse_color(reader)?),
+            Some(b'a') => Code::Alpha(Some(n), parse_alpha(reader)?),
+            oth => todo!("{:?}", oth),
+        }
     } else {
         reader.dbg();
         return Err(());
     })
+}
+
+fn parse_color(reader: &mut Reader) -> Result<Color, ()> {
+    reader.expect(b'&')?;
+    reader.expect(b'H')?;
+    let hex = reader.take_while(|c| c.is_ascii_hexdigit());
+    reader.expect(b'&')?;
+    Ok(std::str::from_utf8(hex).unwrap().parse().unwrap())
+}
+
+fn parse_alpha(reader: &mut Reader) -> Result<u8, ()> {
+    reader.expect(b'&')?;
+    reader.expect(b'H')?;
+    let hex = reader.take_while(|c| c.is_ascii_hexdigit());
+    reader.expect(b'&')?;
+    Ok(u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap())
 }
 
 fn read_style(s: &[u8]) -> Result<Vec<Code>, ()> {
