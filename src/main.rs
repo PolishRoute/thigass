@@ -219,7 +219,7 @@ impl FromStr for Color {
                 r: 255,
                 g: 255,
                 b: 255,
-                a: u8::from_str_radix(&s[0..2], 16).unwrap()
+                a: u8::from_str_radix(&s[0..2], 16).unwrap(),
             },
             _ => todo!("{}", s),
         })
@@ -521,6 +521,7 @@ enum Code {
     YShadow(u32),
     WrappingStyle(u32),
     Reset,
+    Transition { t1: u32, t2: u32, accel: Option<f32>, style: String },
 }
 
 #[derive(Debug)]
@@ -642,7 +643,34 @@ fn parse_override(reader: &mut Reader) -> Result<Vec<Code>, ()> {
                     items.push(Code::Bold(reader.consume().unwrap() == b'1'));
                 } else if reader.try_consume(b"shad") {
                     items.push(Code::Shadow(reader.read_number()));
-                } else if reader.try_consume(b"t") || reader.try_consume(b"fad") || reader.try_consume(b"move") {
+                } else if reader.try_consume(b"t") {
+                    reader.expect(b'(')?;
+                    let args: Vec<&str> = reader
+                        .take_while(|b| b != b')')
+                        .split(|b| *b == b',')
+                        .map(|it| std::str::from_utf8(it).unwrap())
+                        .collect();
+
+                    let item = match args.len() {
+                        4 => {
+                            let t1: u32 = args[0].parse().unwrap();
+                            let t2: u32 = args[1].parse().unwrap();
+                            let accel: f32 = args[2].parse().unwrap();
+                            let style = args[3];
+                            Code::Transition { t1, t2, accel: Some(accel), style: style.to_string() }
+                        }
+                        3 => {
+                            let t1: u32 = args[0].parse().unwrap();
+                            let t2: u32 = args[1].parse().unwrap();
+                            let style = args[2];
+                            Code::Transition { t1, t2, accel: None, style: style.to_string() }
+                        }
+                        _ => {
+                            todo!("{:?}", args);
+                        }
+                    };
+                    items.push(item);
+                } else if reader.try_consume(b"fad") || reader.try_consume(b"move") {
                     reader.expect(b'(')?;
                     let x = reader.take_while(|b| b != b')');
                     reader.expect(b')')?;
