@@ -512,13 +512,13 @@ enum Code {
     RotateZ(f32),
     Color(Option<u32>, Color),
     Alpha(Option<u32>, u8),
-    Pos(u32, u32),
+    Pos(f32, f32),
     DrawScale(f32),
     Clip(Vec<DrawCommand>),
     Bold(bool),
-    Shadow(u32),
-    XShadow(u32),
-    YShadow(u32),
+    Shadow(f32),
+    XShadow(f32),
+    YShadow(f32),
     WrappingStyle(u32),
     Reset,
     Transition { t1: Option<f32>, t2: Option<f32>, accel: Option<f32>, style: Vec<Code> },
@@ -625,9 +625,9 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
         Code::Clip(cmds)
     } else if reader.try_consume(b"pos") {
         reader.consume();
-        let x = reader.read_number();
+        let x = reader.read_float();
         reader.consume();
-        let y = reader.read_number();
+        let y = reader.read_float();
         reader.consume();
 
         Code::Pos(x, y)
@@ -636,7 +636,7 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
     } else if reader.try_consume(b"b") {
         Code::Bold(reader.consume().unwrap() == b'1')
     } else if reader.try_consume(b"shad") {
-        Code::Shadow(reader.read_number())
+        Code::Shadow(reader.read_float())
     } else if reader.try_consume(b"t") {
         let args = parse_args(reader)?;
         match args.len() {
@@ -685,9 +685,9 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
             _ => todo!("{:?}", args)
         }
     } else if reader.try_consume(b"xshad") {
-        Code::XShadow(reader.read_number())
+        Code::XShadow(reader.read_float())
     } else if reader.try_consume(b"yshad") {
-        Code::YShadow(reader.read_number())
+        Code::YShadow(reader.read_float())
     } else if reader.try_consume(b"q") {
         Code::WrappingStyle(reader.read_number())
     } else if reader.try_consume(b"r") {
@@ -741,6 +741,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ()> {
                 break;
             }
             _ => {
+                reader.dbg();
                 reader.consume();
             }
         }
