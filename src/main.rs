@@ -1,4 +1,5 @@
 #![feature(let_else)]
+#![allow(unused)]
 
 use std::{fmt, fs};
 use std::fs::read;
@@ -6,6 +7,7 @@ use std::io::{BufRead, BufReader};
 use std::num::ParseIntError;
 use std::path::Path;
 use std::str::FromStr;
+use crate::Code::Pos;
 
 struct Timestamp {
     value: u64,
@@ -320,7 +322,7 @@ fn parse_file(path: impl AsRef<Path>) {
     let mut buffer = String::new();
     let mut styles = Vec::new();
 
-    let parse_event = |data: &str, mapping: &EventMapping, what: EventType| {
+    let parse_event = |data: &str, mapping: &EventMapping, what: EventType, line_number: usize| {
         let fields = data.splitn(10, ',').collect::<Vec<_>>();
         let line = Event {
             marked: fields.get(mapping.marked) == Some(&"1"),
@@ -329,19 +331,28 @@ fn parse_file(path: impl AsRef<Path>) {
             end: fields[mapping.end].parse().unwrap(),
             style: fields[mapping.style],
             name: fields[mapping.name],
-            margin_l: fields[mapping.margin_l].parse().ok(),
-            margin_r: fields[mapping.margin_r].parse().ok(),
-            margin_v: fields[mapping.margin_v].parse().ok(),
+            margin_l: Some(fields[mapping.margin_l].parse().unwrap()),
+            margin_r: Some(fields[mapping.margin_r].parse().unwrap()),
+            margin_v: Some(fields[mapping.margin_v].parse().unwrap()),
             effect: fields[mapping.effect],
             text: fields[mapping.text],
         };
 
         match parse(line.text.as_bytes()) {
-            Ok(res) => {
-                for p in res {
-                    if let Part::Text(t) = p {
-                        println!("{}", t);
+            Ok(ref res) => {
+                let mut x = false;
+                for part in res {
+                    if let Part::Text(text) = part {
+                        let mut reader = Reader::new(text.as_bytes());
+                        if let Err(e) = parse_curve(&mut reader) {
+                            dbg!(line_number, text, e);
+                            x = true;
+                        }
                     }
+                }
+
+                if x {
+                    dbg!(&line.text);
                 }
             }
             Err(r) => todo!("{:?}", r),
@@ -353,6 +364,8 @@ fn parse_file(path: impl AsRef<Path>) {
         Comment,
     }
 
+    let mut line_number = 0;
+
     loop {
         buffer.clear();
         let line = match reader.read_line(&mut buffer) {
@@ -360,7 +373,11 @@ fn parse_file(path: impl AsRef<Path>) {
             Ok(_) => buffer.trim_end(),
             Err(e) => panic!("{:?}", e),
         };
+        line_number += 1;
 
+        if line_number == 61485 {
+            println!("Line #{}: {}", line_number, line);
+        }
         if let Some(section) = line.strip_prefix("[") {
             current_section = match section.strip_suffix(']').unwrap() {
                 "Events" => Some(Section::Events),
@@ -379,9 +396,9 @@ fn parse_file(path: impl AsRef<Path>) {
                 _ => todo!(),
             }
         } else if let Some(x) = line.strip_prefix("Dialogue: ") {
-            parse_event(x, events_mapping.as_ref().unwrap(), EventType::Dialogue);
+            parse_event(x, events_mapping.as_ref().unwrap(), EventType::Dialogue, line_number);
         } else if let Some(x) = line.strip_prefix("Comment: ") {
-            parse_event(x, events_mapping.as_ref().unwrap(), EventType::Comment);
+            parse_event(x, events_mapping.as_ref().unwrap(), EventType::Comment, line_number);
         } else if let Some(s) = line.strip_prefix("Style: ") {
             let mapping = styles_mapping.as_ref().unwrap();
             let fields = s.split(',').collect::<Vec<_>>();
@@ -461,16 +478,15 @@ impl<'d> Reader<'d> {
             if !f(p) {
                 break;
             }
-            self.consume();
+            self.consume().unwrap();
         }
         &self.buf[pos..self.pos]
     }
 
-    #[track_caller]
-    fn read_float(&mut self) -> f32 {
+    fn read_float(&mut self) -> Result<f32, ReaderError> {
         let x = self.take_while(|c| matches!(c, b'0'..=b'9' | b'.' | b'-'));
         let x = std::str::from_utf8(x).unwrap();
-        x.parse().unwrap()
+        x.parse().map_err(|_| ReaderError::InvalidFloat)
     }
 
     fn read_string(&mut self) -> String {
@@ -487,17 +503,23 @@ impl<'d> Reader<'d> {
         n
     }
 
-    fn expect(&mut self, b: u8) -> Result<(), ()> {
+    fn expect(&mut self, b: u8) -> Result<(), ReaderError> {
         if self.try_consume(&[b]) {
             Ok(())
         } else {
-            Err(())
+            Err(ReaderError::InvalidChar)
         }
     }
 
     fn dbg(&self) {
         println!("!!! {:?}", std::str::from_utf8(&self.buf[self.pos..]));
     }
+}
+
+#[derive(Debug)]
+enum ReaderError {
+    InvalidFloat,
+    InvalidChar,
 }
 
 #[derive(Debug)]
@@ -542,15 +564,16 @@ enum DrawCommand {
     Bezier([(f32, f32); 3]),
 }
 
-fn read_n(reader: &mut Reader) -> (f32, f32) {
-    let x = reader.read_float();
+#[track_caller]
+fn read_n(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
+    let x = reader.read_float()?;
     reader.take_while(|c| c.is_ascii_whitespace());
-    let y = reader.read_float();
+    let y = reader.read_float()?;
     reader.take_while(|c| c.is_ascii_whitespace());
-    (x, y)
+    Ok((x, y))
 }
 
-fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<Vec<&'a str>, ()> {
+fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<Vec<&'a str>, ReaderError> {
     reader.expect(b'(')?;
     let args: Vec<&'a str> = reader
         .take_while(|b| b != b')')
@@ -561,39 +584,39 @@ fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<Vec<&'a str>, ()> {
     Ok(args)
 }
 
-fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ()> {
+fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
     let mut cmds = Vec::new();
     while let Some(c) = reader.peek() {
         match c {
             b'm' => {
                 reader.expect(b'm')?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let (x, y) = read_n(reader);
+                let (x, y) = read_n(reader)?;
                 cmds.push(DrawCommand::CloseAndMove(x, y));
             }
             b'n' => {
                 reader.expect(b'n')?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let (x, y) = read_n(reader);
+                let (x, y) = read_n(reader)?;
                 cmds.push(DrawCommand::Move(x, y));
             }
             b'l' => {
                 reader.expect(b'l')?;
                 reader.take_while(|c| c.is_ascii_whitespace());
 
-                while reader.peek().unwrap().is_ascii_digit() {
-                    let (x, y) = read_n(reader);
+                while reader.peek().map_or(false, |c| c.is_ascii_digit()) {
+                    let (x, y) = read_n(reader)?;
                     cmds.push(DrawCommand::Line(x, y));
                 }
             }
             b'b' => {
                 reader.expect(b'b')?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let p1 = read_n(reader);
+                let p1 = read_n(reader)?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let p2 = read_n(reader);
+                let p2 = read_n(reader)?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let p3 = read_n(reader);
+                let p3 = read_n(reader)?;
 
                 cmds.push(DrawCommand::Bezier([p1, p2, p3]));
             }
@@ -603,34 +626,34 @@ fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ()> {
     Ok(cmds)
 }
 
-fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
+fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
     reader.expect(b'\\')?;
     Ok(if reader.try_consume(b"an") {
         Code::Align(Alignment(reader.read_number() as u8))
     } else if reader.try_consume(b"blur") {
-        Code::Blur(reader.read_float())
+        Code::Blur(reader.read_float()?)
     } else if reader.try_consume(b"bord") {
-        Code::Border(reader.read_float())
+        Code::Border(reader.read_float()?)
     } else if reader.try_consume(b"xbord") {
-        Code::XBorder(reader.read_float())
+        Code::XBorder(reader.read_float()?)
     } else if reader.try_consume(b"ybord") {
-        Code::YBorder(reader.read_float())
+        Code::YBorder(reader.read_float()?)
     } else if reader.try_consume(b"fn") {
         Code::FontName(reader.read_string())
     } else if reader.try_consume(b"fscx") {
-        Code::FontScaleX(reader.read_float())
+        Code::FontScaleX(reader.read_float()?)
     } else if reader.try_consume(b"fscy") {
-        Code::FontScaleY(reader.read_float())
+        Code::FontScaleY(reader.read_float()?)
     } else if reader.try_consume(b"fs") {
-        Code::FontSize(reader.read_float())
+        Code::FontSize(reader.read_float()?)
     } else if reader.try_consume(b"frx") {
-        Code::RotateX(reader.read_float())
+        Code::RotateX(reader.read_float()?)
     } else if reader.try_consume(b"fry") {
-        Code::RotateY(reader.read_float())
+        Code::RotateY(reader.read_float()?)
     } else if reader.try_consume(b"frz") {
-        Code::RotateZ(reader.read_float())
+        Code::RotateZ(reader.read_float()?)
     } else if reader.try_consume(b"fax") {
-        Code::RotateZ(reader.read_float())
+        Code::RotateZ(reader.read_float()?)
     } else if reader.try_consume(b"clip") {
         let args = parse_args(reader)?;
         match args.len() {
@@ -649,18 +672,18 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
         }
     } else if reader.try_consume(b"pos") {
         reader.consume();
-        let x = reader.read_float();
+        let x = reader.read_float()?;
         reader.consume();
-        let y = reader.read_float();
+        let y = reader.read_float()?;
         reader.consume();
 
         Code::Pos(x, y)
     } else if reader.try_consume(b"p") {
-        Code::DrawScale(reader.read_float())
+        Code::DrawScale(reader.read_float()?)
     } else if reader.try_consume(b"b") {
         Code::Bold(reader.consume().unwrap() == b'1')
     } else if reader.try_consume(b"shad") {
-        Code::Shadow(reader.read_float())
+        Code::Shadow(reader.read_float()?)
     } else if reader.try_consume(b"t") {
         let args = parse_args(reader)?;
         match args.len() {
@@ -709,9 +732,9 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
             _ => todo!("{:?}", args)
         }
     } else if reader.try_consume(b"xshad") {
-        Code::XShadow(reader.read_float())
+        Code::XShadow(reader.read_float()?)
     } else if reader.try_consume(b"yshad") {
-        Code::YShadow(reader.read_float())
+        Code::YShadow(reader.read_float()?)
     } else if reader.try_consume(b"q") {
         Code::WrappingStyle(reader.read_number())
     } else if reader.try_consume(b"r") {
@@ -729,11 +752,11 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ()> {
         }
     } else {
         reader.dbg();
-        return Err(());
+        return Err(ReaderError::InvalidChar);
     })
 }
 
-fn parse_color(reader: &mut Reader) -> Result<Color, ()> {
+fn parse_color(reader: &mut Reader) -> Result<Color, ReaderError> {
     reader.expect(b'&')?;
     reader.expect(b'H')?;
     let hex = reader.take_while(|c| c.is_ascii_hexdigit());
@@ -741,7 +764,7 @@ fn parse_color(reader: &mut Reader) -> Result<Color, ()> {
     Ok(std::str::from_utf8(hex).unwrap().parse().unwrap())
 }
 
-fn parse_alpha(reader: &mut Reader) -> Result<u8, ()> {
+fn parse_alpha(reader: &mut Reader) -> Result<u8, ReaderError> {
     reader.expect(b'&')?;
     reader.expect(b'H')?;
     let hex = reader.take_while(|c| c.is_ascii_hexdigit());
@@ -749,12 +772,12 @@ fn parse_alpha(reader: &mut Reader) -> Result<u8, ()> {
     Ok(u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap())
 }
 
-fn read_style(s: &[u8]) -> Result<Vec<Code>, ()> {
+fn read_style(s: &[u8]) -> Result<Vec<Code>, ReaderError> {
     let mut reader = Reader::new(s);
     parse_overrides(&mut reader)
 }
 
-fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ()> {
+fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ReaderError> {
     let mut items = Vec::new();
     while let Some(x) = reader.peek() {
         match x {
@@ -765,8 +788,8 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ()> {
                 break;
             }
             _ => {
-                reader.dbg();
-                reader.consume();
+                let raw = reader.take_while(|c| !matches!(c, b'\\' | b'}'));
+                dbg!(std::str::from_utf8(raw));
             }
         }
     }
@@ -780,7 +803,7 @@ enum Part {
     Overrides(Vec<Code>),
 }
 
-fn parse(s: &[u8]) -> Result<Vec<Part>, ()> {
+fn parse(s: &[u8]) -> Result<Vec<Part>, ReaderError> {
     let mut parts = Vec::new();
 
     let mut buff = Vec::new();
