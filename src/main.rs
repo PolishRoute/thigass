@@ -2,11 +2,14 @@
 #![allow(unused)]
 
 use std::{fmt, fs};
+use std::collections::hash_map::RandomState;
 use std::fs::read;
 use std::io::{BufRead, BufReader};
 use std::num::ParseIntError;
 use std::path::Path;
 use std::str::FromStr;
+use fxhash::{FxBuildHasher, FxHasher};
+use indexmap::IndexMap;
 use crate::Code::Pos;
 
 struct Timestamp {
@@ -63,7 +66,6 @@ mod tests {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
 struct Event<'s> {
     marked: bool,
     layer: i32,
@@ -78,56 +80,39 @@ struct Event<'s> {
     text: &'s str,
 }
 
-#[derive(Debug)]
-struct EventMapping {
-    marked: usize,
-    layer: usize,
-    start: usize,
-    end: usize,
-    style: usize,
-    name: usize,
-    margin_l: usize,
-    margin_r: usize,
-    margin_v: usize,
-    effect: usize,
-    text: usize,
+#[derive(Hash, Eq, PartialEq)]
+enum EventField {
+    Marked,
+    Layer,
+    Start,
+    End,
+    Style,
+    Name,
+    MarginL,
+    MarginR,
+    MarginV,
+    Effect,
+    Text,
 }
 
-impl Default for EventMapping {
-    fn default() -> Self {
-        EventMapping {
-            marked: usize::MAX,
-            layer: usize::MAX,
-            start: usize::MAX,
-            end: usize::MAX,
-            style: usize::MAX,
-            name: usize::MAX,
-            margin_l: usize::MAX,
-            margin_r: usize::MAX,
-            margin_v: usize::MAX,
-            effect: usize::MAX,
-            text: usize::MAX,
-        }
-    }
-}
-
-fn parse_events_mapping(config: &str) -> Option<EventMapping> {
-    let mut mapping = EventMapping::default();
+fn parse_events_mapping(config: &str) -> Option<IndexMap<EventField, usize, FxBuildHasher>> {
+    let mut mapping = IndexMap::with_hasher(FxBuildHasher::default());
     for (idx, field) in config.split(", ").enumerate() {
-        match field {
-            "Layer" => mapping.layer = idx,
-            "Marked" => mapping.marked = idx,
-            "Start" => mapping.start = idx,
-            "End" => mapping.end = idx,
-            "Style" => mapping.style = idx,
-            "Name" => mapping.name = idx,
-            "MarginL" => mapping.margin_l = idx,
-            "MarginR" => mapping.margin_r = idx,
-            "MarginV" => mapping.margin_v = idx,
-            "Effect" => mapping.effect = idx,
-            "Text" => mapping.text = idx,
+        let key = match field {
+            "Layer" => EventField::Layer,
+            "Marked" => EventField::Marked,
+            "Start" => EventField::Start,
+            "End" => EventField::End,
+            "Style" => EventField::Style,
+            "Name" => EventField::Name,
+            "MarginL" => EventField::MarginL,
+            "MarginR" => EventField::MarginR,
+            "MarginV" => EventField::MarginV,
+            "Effect" => EventField::Effect,
+            "Text" => EventField::Text,
             _ => unimplemented!("{}", field),
-        }
+        };
+        mapping.insert(key, idx);
     }
 
     Some(mapping)
@@ -164,31 +149,31 @@ struct ScriptInfo {
     video_position: u32,
 }
 
-
-struct StyleMapping {
-    name: usize,
-    font_name: usize,
-    font_size: usize,
-    primary_colour: usize,
-    secondary_colour: usize,
-    outline_colour: usize,
-    back_colour: usize,
-    bold: usize,
-    italic: usize,
-    underline: usize,
-    strike_out: usize,
-    scale_x: usize,
-    scale_y: usize,
-    spacing: usize,
-    angle: usize,
-    border_style: usize,
-    outline: usize,
-    shadow: usize,
-    alignment: usize,
-    margin_l: usize,
-    margin_r: usize,
-    margin_v: usize,
-    encoding: usize,
+#[derive(Hash, Eq, PartialEq)]
+enum StyleField {
+    Name,
+    FontName,
+    FontSize,
+    PrimaryColour,
+    SecondaryColour,
+    OutlineColour,
+    BackColour,
+    Bold,
+    Italic,
+    Underline,
+    StrikeOut,
+    ScaleX,
+    ScaleY,
+    Spacing,
+    Angle,
+    BorderStyle,
+    Outline,
+    Shadow,
+    Alignment,
+    MarginL,
+    MarginR,
+    MarginV,
+    Encoding,
 }
 
 #[derive(Debug)]
@@ -255,87 +240,63 @@ struct Style {
     encoding: (),
 }
 
-
-fn parse_styles_mapping(s: &str) -> Option<StyleMapping> {
-    let mut map = StyleMapping {
-        name: usize::MAX,
-        font_name: usize::MAX,
-        font_size: usize::MAX,
-        primary_colour: usize::MAX,
-        secondary_colour: usize::MAX,
-        outline_colour: usize::MAX,
-        back_colour: usize::MAX,
-        bold: usize::MAX,
-        italic: usize::MAX,
-        underline: usize::MAX,
-        strike_out: usize::MAX,
-        scale_x: usize::MAX,
-        scale_y: usize::MAX,
-        spacing: usize::MAX,
-        angle: usize::MAX,
-        border_style: usize::MAX,
-        outline: usize::MAX,
-        shadow: usize::MAX,
-        alignment: usize::MAX,
-        margin_l: usize::MAX,
-        margin_r: usize::MAX,
-        margin_v: usize::MAX,
-        encoding: usize::MAX,
-    };
+fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHasher>> {
+    let mut mapping = IndexMap::with_hasher(FxBuildHasher::default());
     for (idx, s) in s.split(", ").enumerate() {
-        match s {
-            "Name" => map.name = idx,
-            "Fontname" => map.font_name = idx,
-            "Fontsize" => map.font_size = idx,
-            "PrimaryColour" => map.primary_colour = idx,
-            "SecondaryColour" => map.secondary_colour = idx,
-            "OutlineColour" => map.outline_colour = idx,
-            "BackColour" => map.back_colour = idx,
-            "Bold" => map.bold = idx,
-            "Italic" => map.italic = idx,
-            "Underline" => map.underline = idx,
-            "StrikeOut" => map.strike_out = idx,
-            "ScaleX" => map.scale_x = idx,
-            "ScaleY" => map.scale_y = idx,
-            "Spacing" => map.spacing = idx,
-            "Angle" => map.angle = idx,
-            "BorderStyle" => map.border_style = idx,
-            "Outline" => map.outline = idx,
-            "Shadow" => map.shadow = idx,
-            "Alignment" => map.alignment = idx,
-            "MarginL" => map.margin_l = idx,
-            "MarginR" => map.margin_r = idx,
-            "MarginV" => map.margin_v = idx,
-            "Encoding" => map.encoding = idx,
+        let key = match s {
+            "Name" => StyleField::Name,
+            "Fontname" => StyleField::FontName,
+            "Fontsize" => StyleField::FontSize,
+            "PrimaryColour" => StyleField::PrimaryColour,
+            "SecondaryColour" => StyleField::SecondaryColour,
+            "OutlineColour" => StyleField::OutlineColour,
+            "BackColour" => StyleField::BackColour,
+            "Bold" => StyleField::Bold,
+            "Italic" => StyleField::Italic,
+            "Underline" => StyleField::Underline,
+            "StrikeOut" => StyleField::StrikeOut,
+            "ScaleX" => StyleField::ScaleX,
+            "ScaleY" => StyleField::ScaleY,
+            "Spacing" => StyleField::Spacing,
+            "Angle" => StyleField::Angle,
+            "BorderStyle" => StyleField::BorderStyle,
+            "Outline" => StyleField::Outline,
+            "Shadow" => StyleField::Shadow,
+            "Alignment" => StyleField::Alignment,
+            "MarginL" => StyleField::MarginL,
+            "MarginR" => StyleField::MarginR,
+            "MarginV" => StyleField::MarginV,
+            "Encoding" => StyleField::Encoding,
             _ => unimplemented!(),
-        }
+        };
+        mapping.insert(key, idx);
     }
 
-    Some(map)
+    Some(mapping)
 }
 
 fn parse_file(path: impl AsRef<Path>) {
     let mut reader = BufReader::new(fs::File::open(path).unwrap());
-    let mut events_mapping: Option<EventMapping> = None;
+    let mut events_mapping = None;
     let mut styles_mapping = None;
     let mut current_section = None;
     let mut buffer = String::new();
     let mut styles = Vec::new();
 
-    let parse_event = |data: &str, mapping: &EventMapping, what: EventType, line_number: usize| {
+    let parse_event = |data: &str, mapping: &IndexMap<EventField, usize, FxBuildHasher>, what: EventType, line_number: usize| {
         let fields = data.splitn(10, ',').collect::<Vec<_>>();
         let line = Event {
-            marked: fields.get(mapping.marked) == Some(&"1"),
-            layer: fields[mapping.layer].parse().unwrap(),
-            start: fields[mapping.start].parse().unwrap(),
-            end: fields[mapping.end].parse().unwrap(),
-            style: fields[mapping.style],
-            name: fields[mapping.name],
-            margin_l: Some(fields[mapping.margin_l].parse().unwrap()),
-            margin_r: Some(fields[mapping.margin_r].parse().unwrap()),
-            margin_v: Some(fields[mapping.margin_v].parse().unwrap()),
-            effect: fields[mapping.effect],
-            text: fields[mapping.text],
+            marked: mapping.get(&EventField::Marked).and_then(|idx| fields.get(*idx)) == Some(&"1"),
+            layer: fields[mapping[&EventField::Layer]].parse().unwrap(),
+            start: fields[mapping[&EventField::Start]].parse().unwrap(),
+            end: fields[mapping[&EventField::End]].parse().unwrap(),
+            style: fields[mapping[&EventField::Style]],
+            name: fields[mapping[&EventField::Name]],
+            margin_l: Some(fields[mapping[&EventField::MarginL]].parse().unwrap()),
+            margin_r: Some(fields[mapping[&EventField::MarginR]].parse().unwrap()),
+            margin_v: Some(fields[mapping[&EventField::MarginV]].parse().unwrap()),
+            effect: fields[mapping[&EventField::Effect]],
+            text: fields[mapping[&EventField::Text]],
         };
 
         match parse(line.text.as_bytes()) {
@@ -345,14 +306,14 @@ fn parse_file(path: impl AsRef<Path>) {
                     if let Part::Text(text) = part {
                         let mut reader = Reader::new(text.as_bytes());
                         if let Err(e) = parse_curve(&mut reader) {
-                            dbg!(line_number, text, e);
+                            // dbg!(line_number, text, e);
                             x = true;
                         }
                     }
                 }
 
                 if x {
-                    dbg!(&line.text);
+                    // dbg!(&line.text);
                 }
             }
             Err(r) => todo!("{:?}", r),
@@ -375,9 +336,6 @@ fn parse_file(path: impl AsRef<Path>) {
         };
         line_number += 1;
 
-        if line_number == 61485 {
-            println!("Line #{}: {}", line_number, line);
-        }
         if let Some(section) = line.strip_prefix("[") {
             current_section = match section.strip_suffix(']').unwrap() {
                 "Events" => Some(Section::Events),
@@ -403,28 +361,28 @@ fn parse_file(path: impl AsRef<Path>) {
             let mapping = styles_mapping.as_ref().unwrap();
             let fields = s.split(',').collect::<Vec<_>>();
             let style = Style {
-                name: fields[mapping.name].to_string(),
-                font_name: fields[mapping.font_name].parse().unwrap(),
-                font_size: fields[mapping.font_size].parse().unwrap(),
-                primary_colour: fields[mapping.primary_colour].parse().unwrap(),
-                secondary_colour: fields[mapping.secondary_colour].parse().unwrap(),
-                outline_colour: fields[mapping.outline_colour].parse().unwrap(),
-                back_colour: fields[mapping.back_colour].parse().unwrap(),
-                bold: fields[mapping.bold] == "1",
-                italic: fields[mapping.italic] == "1",
-                underline: fields[mapping.underline] == "1",
-                strike_out: fields[mapping.strike_out] == "1",
-                scale_x: fields[mapping.scale_x].parse().unwrap(),
-                scale_y: fields[mapping.scale_y].parse().unwrap(),
-                spacing: fields[mapping.spacing].parse().unwrap(),
-                angle: fields[mapping.angle].parse().unwrap(),
+                name: fields[mapping[&StyleField::Name]].to_string(),
+                font_name: fields[mapping[&StyleField::FontName]].parse().unwrap(),
+                font_size: fields[mapping[&StyleField::FontSize]].parse().unwrap(),
+                primary_colour: fields[mapping[&StyleField::PrimaryColour]].parse().unwrap(),
+                secondary_colour: fields[mapping[&StyleField::SecondaryColour]].parse().unwrap(),
+                outline_colour: fields[mapping[&StyleField::OutlineColour]].parse().unwrap(),
+                back_colour: fields[mapping[&StyleField::BackColour]].parse().unwrap(),
+                bold: fields[mapping[&StyleField::Bold]] == "1",
+                italic: fields[mapping[&StyleField::Italic]] == "1",
+                underline: fields[mapping[&StyleField::Underline]] == "1",
+                strike_out: fields[mapping[&StyleField::StrikeOut]] == "1",
+                scale_x: fields[mapping[&StyleField::ScaleX]].parse().unwrap(),
+                scale_y: fields[mapping[&StyleField::ScaleY]].parse().unwrap(),
+                spacing: fields[mapping[&StyleField::Spacing]].parse().unwrap(),
+                angle: fields[mapping[&StyleField::Angle]].parse().unwrap(),
                 border_style: (),
-                outline: fields[mapping.outline].parse().unwrap(),
-                shadow: fields[mapping.shadow].parse().unwrap(),
-                alignment: Alignment(fields[mapping.alignment].parse().unwrap()),
-                margin_l: fields[mapping.margin_l].parse().unwrap(),
-                margin_r: fields[mapping.margin_r].parse().unwrap(),
-                margin_v: fields[mapping.margin_v].parse().unwrap(),
+                outline: fields[mapping[&StyleField::Outline]].parse().unwrap(),
+                shadow: fields[mapping[&StyleField::Shadow]].parse().unwrap(),
+                alignment: Alignment(fields[mapping[&StyleField::Alignment]].parse().unwrap()),
+                margin_l: fields[mapping[&StyleField::MarginL]].parse().unwrap(),
+                margin_r: fields[mapping[&StyleField::MarginR]].parse().unwrap(),
+                margin_v: fields[mapping[&StyleField::MarginV]].parse().unwrap(),
                 encoding: (),
             };
             styles.push(style);
