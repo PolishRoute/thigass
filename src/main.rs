@@ -1,16 +1,13 @@
 #![feature(let_else)]
-#![allow(unused)]
 
 use std::{fmt, fs};
-use std::collections::hash_map::RandomState;
-use std::fs::read;
 use std::io::{BufRead, BufReader};
 use std::num::ParseIntError;
 use std::path::Path;
 use std::str::FromStr;
-use fxhash::{FxBuildHasher, FxHasher};
+
+use fxhash::FxBuildHasher;
 use indexmap::IndexMap;
-use crate::Code::Pos;
 
 struct Timestamp {
     value: u64,
@@ -66,6 +63,7 @@ mod tests {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 struct Event<'s> {
     marked: bool,
     layer: i32,
@@ -131,6 +129,7 @@ fn main() {
     dbg!(a.elapsed());
 }
 
+#[allow(unused)]
 struct ScriptInfo {
     wrap_style: u32,
     scaled_border_and_shadow: bool,
@@ -177,6 +176,7 @@ enum StyleField {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 struct Color {
     r: u8,
     g: u8,
@@ -214,6 +214,7 @@ impl FromStr for Color {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 struct Style {
     name: String,
     font_name: String,
@@ -275,6 +276,7 @@ fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHa
     Some(mapping)
 }
 
+#[allow(unused)]
 fn parse_file(path: impl AsRef<Path>) {
     let mut reader = BufReader::new(fs::File::open(path).unwrap());
     let mut events_mapping = None;
@@ -283,9 +285,9 @@ fn parse_file(path: impl AsRef<Path>) {
     let mut buffer = String::new();
     let mut styles = Vec::new();
 
-    let parse_event = |data: &str, mapping: &IndexMap<EventField, usize, FxBuildHasher>, what: EventType, line_number: usize| {
+    let parse_event = |data: &str, mapping: &IndexMap<EventField, usize, FxBuildHasher>, event_type: EventType, line_number: usize| {
         let fields = data.splitn(10, ',').collect::<Vec<_>>();
-        let line = Event {
+        let event = Event {
             marked: mapping.get(&EventField::Marked).and_then(|idx| fields.get(*idx)) == Some(&"1"),
             layer: fields[mapping[&EventField::Layer]].parse().unwrap(),
             start: fields[mapping[&EventField::Start]].parse().unwrap(),
@@ -299,13 +301,13 @@ fn parse_file(path: impl AsRef<Path>) {
             text: fields[mapping[&EventField::Text]],
         };
 
-        match parse(line.text.as_bytes()) {
+        match parse(event.text.as_bytes()) {
             Ok(ref res) => {
                 let mut x = false;
                 for part in res {
                     if let Part::Text(text) = part {
                         let mut reader = Reader::new(text.as_bytes());
-                        if let Err(e) = parse_curve(&mut reader) {
+                        if let Err(_e) = parse_curve(&mut reader) {
                             // dbg!(line_number, text, e);
                             x = true;
                         }
@@ -481,6 +483,7 @@ enum ReaderError {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 enum Code {
     Align(Alignment),
     Blur(f32),
@@ -746,8 +749,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ReaderError> {
                 break;
             }
             _ => {
-                let raw = reader.take_while(|c| !matches!(c, b'\\' | b'}'));
-                dbg!(std::str::from_utf8(raw));
+                let _comment = reader.take_while(|c| !matches!(c, b'\\' | b'}'));
             }
         }
     }
