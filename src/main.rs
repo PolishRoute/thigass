@@ -189,24 +189,35 @@ impl FromStr for Color {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.strip_prefix("&H").unwrap_or(s);
+
+        fn parse_hex(s: &str) -> Result<u8, ()> {
+            u8::from_str_radix(&s, 16).map_err(|_| ())
+        }
+
         Ok(match s.len() {
             8 => Color {
-                r: u8::from_str_radix(&s[0..2], 16).unwrap(),
-                g: u8::from_str_radix(&s[2..4], 16).unwrap(),
-                b: u8::from_str_radix(&s[4..6], 16).unwrap(),
-                a: u8::from_str_radix(&s[6..8], 16).unwrap(),
+                b: parse_hex(&s[0..2])?,
+                g: parse_hex(&s[2..4])?,
+                r: parse_hex(&s[4..6])?,
+                a: parse_hex(&s[6..8])?,
             },
             6 => Color {
-                r: u8::from_str_radix(&s[0..2], 16).unwrap(),
-                g: u8::from_str_radix(&s[2..4], 16).unwrap(),
-                b: u8::from_str_radix(&s[4..6], 16).unwrap(),
-                a: 255,
+                b: parse_hex(&s[0..2])?,
+                g: parse_hex(&s[2..4])?,
+                r: parse_hex(&s[4..6])?,
+                a: 0,
+            },
+            4 => Color {
+                b: parse_hex(&s[0..2])?,
+                g: parse_hex(&s[2..4])?,
+                r: 0,
+                a: 0,
             },
             2 => Color {
-                r: 255,
-                g: 255,
-                b: 255,
-                a: u8::from_str_radix(&s[0..2], 16).unwrap(),
+                b: parse_hex(&s[0..2])?,
+                g: 0,
+                r: 0,
+                a: 0,
             },
             _ => todo!("{}", s),
         })
