@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::num::{ParseFloatError, ParseIntError};
 use std::path::Path;
 use std::str::FromStr;
+use arrayvec::ArrayVec;
 
 use fxhash::FxBuildHasher;
 use indexmap::IndexMap;
@@ -537,8 +538,7 @@ enum DrawCommand {
     Bezier([(f32, f32); 3]),
 }
 
-#[track_caller]
-fn read_n(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
+fn read_point(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
     let x = reader.read_float()?;
     reader.take_while(|c| c.is_ascii_whitespace());
     let y = reader.read_float()?;
@@ -564,13 +564,13 @@ fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
             b'm' => {
                 reader.expect(b'm')?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let (x, y) = read_n(reader)?;
+                let (x, y) = read_point(reader)?;
                 cmds.push(DrawCommand::CloseAndMove(x, y));
             }
             b'n' => {
                 reader.expect(b'n')?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let (x, y) = read_n(reader)?;
+                let (x, y) = read_point(reader)?;
                 cmds.push(DrawCommand::Move(x, y));
             }
             b'l' => {
@@ -578,18 +578,18 @@ fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
                 reader.take_while(|c| c.is_ascii_whitespace());
 
                 while reader.peek().map_or(false, |c| c.is_ascii_digit()) {
-                    let (x, y) = read_n(reader)?;
+                    let (x, y) = read_point(reader)?;
                     cmds.push(DrawCommand::Line(x, y));
                 }
             }
             b'b' => {
                 reader.expect(b'b')?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let p1 = read_n(reader)?;
+                let p1 = read_point(reader)?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let p2 = read_n(reader)?;
+                let p2 = read_point(reader)?;
                 reader.take_while(|c| c.is_ascii_whitespace());
-                let p3 = read_n(reader)?;
+                let p3 = read_point(reader)?;
 
                 cmds.push(DrawCommand::Bezier([p1, p2, p3]));
             }
@@ -642,28 +642,29 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
         Code::RotateZ(reader.read_float()?)
     } else if reader.try_consume(b"clip") {
         let args = parse_args(reader)?;
-        match args.len() {
-            1 => {
-                let cmds = parse_curve(reader)?;
+        match args[..] {
+            [curve] => {
+                let mut reader = Reader::new(curve.as_bytes());
+                let cmds = parse_curve(&mut reader)?;
                 Code::Clip(cmds)
             }
-            4 => {
-                let x1 = args[0].parse()?;
-                let y1 = args[1].parse()?;
-                let x2 = args[2].parse()?;
-                let y2 = args[3].parse()?;
-                Code::ClipRect(x1, y1, x2, y2)
-            }
+            [x1, y1, x2, y2] => Code::ClipRect(
+                x1.parse()?,
+                y1.parse()?,
+                x2.parse()?,
+                y2.parse()?,
+            ),
             _ => todo!("{:?}", args)
         }
     } else if reader.try_consume(b"pos") {
-        reader.consume();
-        let x = reader.read_float()?;
-        reader.consume();
-        let y = reader.read_float()?;
-        reader.consume();
-
-        Code::Pos(x, y)
+        let args = parse_args(reader)?;
+        match args[..] {
+            [x, y] => Code::Pos(
+                x.parse()?,
+                y.parse()?,
+            ),
+            _ => todo!("{:?}", args)
+        }
     } else if reader.try_consume(b"p") {
         Code::DrawScale(reader.read_float()?)
     } else if reader.try_consume(b"b") {
@@ -672,49 +673,47 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
         Code::Shadow(reader.read_float()?)
     } else if reader.try_consume(b"t") {
         let args = parse_args(reader)?;
-        match args.len() {
-            4 => {
-                let t1: f32 = args[0].parse()?;
-                let t2: f32 = args[1].parse()?;
-                let accel: f32 = args[2].parse()?;
-                let style = read_style(args[3].as_bytes())?;
-                Code::Transition { t1: Some(t1), t2: Some(t2), accel: Some(accel), style }
-            }
-            3 => {
-                let t1: f32 = args[0].parse()?;
-                let t2: f32 = args[1].parse()?;
-                let style = read_style(args[2].as_bytes())?;
-                Code::Transition { t1: Some(t1), t2: Some(t2), accel: None, style }
-            }
-            1 => {
-                let style = read_style(args[0].as_bytes())?;
-                Code::Transition { t1: None, t2: None, accel: None, style }
-            }
+        match args[..] {
+            [t1, t2, accel, style] => Code::Transition {
+                t1: Some(t1.parse()?),
+                t2: Some(t2.parse()?),
+                accel: Some(accel.parse()?),
+                style: read_style(style.as_bytes())?,
+            },
+            [t1, t2, style] => Code::Transition {
+                t1: Some(t1.parse()?),
+                t2: Some(t2.parse()?),
+                accel: None,
+                style: read_style(style.as_bytes())?,
+            },
+            [style] => Code::Transition {
+                t1: None,
+                t2: None,
+                accel: None,
+                style: read_style(style.as_bytes())?,
+            },
             _ => unimplemented!("t: {:?}", args),
         }
     } else if reader.try_consume(b"fad") {
         let args = parse_args(reader)?;
-        match args.len() {
-            2 => {
-                let t1: f32 = args[0].parse()?;
-                let t2: f32 = args[0].parse()?;
-                Code::Fade { t1, t2 }
-            }
+        match args[..] {
+            [t1, t2] => Code::Fade {
+                t1: t1.parse()?,
+                t2: t2.parse()?,
+            },
             _ => todo!("{:?}", args),
         }
     } else if reader.try_consume(b"move") {
         let args = parse_args(reader)?;
-        match args.len() {
-            6 => {
-                let x1 = args[0].parse()?;
-                let y1 = args[1].parse()?;
-                let x2 = args[2].parse()?;
-                let y2 = args[3].parse()?;
-                let t1 = args[4].parse()?;
-                let t2 = args[4].parse()?;
-
-                Code::Move { x1, y1, x2, y2, t1, t2 }
-            }
+        match args[..] {
+            [x1, y1, x2, y2, t1, t2] => Code::Move {
+                x1: x1.parse()?,
+                y1: y1.parse()?,
+                x2: x2.parse()?,
+                y2: y2.parse()?,
+                t1: t1.parse()?,
+                t2: t2.parse()?,
+            },
             _ => todo!("{:?}", args)
         }
     } else if reader.try_consume(b"xshad") {
