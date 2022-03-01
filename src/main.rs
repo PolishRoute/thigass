@@ -5,7 +5,6 @@ use std::io::{BufRead, BufReader};
 use std::num::{ParseFloatError, ParseIntError};
 use std::path::Path;
 use std::str::FromStr;
-use arrayvec::ArrayVec;
 
 use fxhash::FxBuildHasher;
 use indexmap::IndexMap;
@@ -125,9 +124,9 @@ enum Section {
 }
 
 fn main() {
-    let a = std::time::Instant::now();
+    let s = std::time::Instant::now();
     parse_file("ReinForce_Kishuku_Gakkou_no_Juliet_07_BDRip_1920x1080_x264_FLAC.ass");
-    dbg!(a.elapsed());
+    println!("File parsed in {:?}", s.elapsed());
 }
 
 #[allow(unused)]
@@ -345,7 +344,10 @@ fn parse_file(path: impl AsRef<Path>) {
         buffer.clear();
         let line = match reader.read_line(&mut buffer) {
             Ok(0) => break,
-            Ok(_) => buffer.trim_end(),
+            Ok(_) => {
+                let buf = buffer.trim_end();
+                buf.strip_prefix('\u{feff}').unwrap_or(buf)
+            },
             Err(e) => panic!("{:?}", e),
         };
         line_number += 1;
@@ -402,10 +404,10 @@ fn parse_file(path: impl AsRef<Path>) {
             styles.push(style);
         } else if let Some((name, value)) = line.split_once(": ") {
             // println!("{} = {}", name, value);
-        } else if line.starts_with(";") {
+        } else if line.is_empty() || line.starts_with(";") {
             continue;
         } else {
-            println!(">> {}", line);
+            println!(">> {:?}", line);
         }
 
         buffer.clear();
@@ -608,7 +610,7 @@ impl From<ParseIntError> for ReaderError {
 
 impl From<ParseFloatError> for ReaderError {
     fn from(_: ParseFloatError) -> Self {
-        ReaderError::InvalidInt
+        ReaderError::InvalidFloat
     }
 }
 
