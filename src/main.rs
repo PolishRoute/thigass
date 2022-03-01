@@ -2,7 +2,7 @@
 
 use std::{fmt, fs};
 use std::io::{BufRead, BufReader};
-use std::num::ParseIntError;
+use std::num::{ParseFloatError, ParseIntError};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -297,7 +297,7 @@ fn parse_file(path: impl AsRef<Path>) {
     let mut styles = Vec::new();
 
     let parse_event = |data: &str, mapping: &IndexMap<EventField, usize, FxBuildHasher>, event_type: EventType, line_number: usize| {
-        let fields = data.splitn(10, ',').collect::<Vec<_>>();
+        let fields = data.splitn(mapping.len(), ',').collect::<Vec<_>>();
         let event = Event {
             marked: mapping.get(&EventField::Marked).and_then(|idx| fields.get(*idx)) == Some(&"1"),
             layer: fields[mapping[&EventField::Layer]].parse().unwrap(),
@@ -457,7 +457,7 @@ impl<'d> Reader<'d> {
     fn read_float(&mut self) -> Result<f32, ReaderError> {
         let x = self.take_while(|c| matches!(c, b'0'..=b'9' | b'.' | b'-'));
         let x = std::str::from_utf8(x).unwrap();
-        x.parse().map_err(|_| ReaderError::InvalidFloat)
+        Ok(x.parse()?)
     }
 
     fn read_string(&mut self) -> String {
@@ -490,6 +490,7 @@ impl<'d> Reader<'d> {
 #[derive(Debug)]
 enum ReaderError {
     InvalidFloat,
+    InvalidInt,
     InvalidChar,
 }
 
@@ -598,6 +599,19 @@ fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
     Ok(cmds)
 }
 
+impl From<ParseIntError> for ReaderError {
+    fn from(_: ParseIntError) -> Self {
+        ReaderError::InvalidInt
+    }
+}
+
+
+impl From<ParseFloatError> for ReaderError {
+    fn from(_: ParseFloatError) -> Self {
+        ReaderError::InvalidInt
+    }
+}
+
 fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
     reader.expect(b'\\')?;
     Ok(if reader.try_consume(b"an") {
@@ -634,10 +648,10 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
                 Code::Clip(cmds)
             }
             4 => {
-                let x1 = args[0].parse().unwrap();
-                let y1 = args[1].parse().unwrap();
-                let x2 = args[2].parse().unwrap();
-                let y2 = args[3].parse().unwrap();
+                let x1 = args[0].parse()?;
+                let y1 = args[1].parse()?;
+                let x2 = args[2].parse()?;
+                let y2 = args[3].parse()?;
                 Code::ClipRect(x1, y1, x2, y2)
             }
             _ => todo!("{:?}", args)
@@ -660,15 +674,15 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
         let args = parse_args(reader)?;
         match args.len() {
             4 => {
-                let t1: f32 = args[0].parse().unwrap();
-                let t2: f32 = args[1].parse().unwrap();
-                let accel: f32 = args[2].parse().unwrap();
+                let t1: f32 = args[0].parse()?;
+                let t2: f32 = args[1].parse()?;
+                let accel: f32 = args[2].parse()?;
                 let style = read_style(args[3].as_bytes())?;
                 Code::Transition { t1: Some(t1), t2: Some(t2), accel: Some(accel), style }
             }
             3 => {
-                let t1: f32 = args[0].parse().unwrap();
-                let t2: f32 = args[1].parse().unwrap();
+                let t1: f32 = args[0].parse()?;
+                let t2: f32 = args[1].parse()?;
                 let style = read_style(args[2].as_bytes())?;
                 Code::Transition { t1: Some(t1), t2: Some(t2), accel: None, style }
             }
@@ -682,8 +696,8 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
         let args = parse_args(reader)?;
         match args.len() {
             2 => {
-                let t1: f32 = args[0].parse().unwrap();
-                let t2: f32 = args[0].parse().unwrap();
+                let t1: f32 = args[0].parse()?;
+                let t2: f32 = args[0].parse()?;
                 Code::Fade { t1, t2 }
             }
             _ => todo!("{:?}", args),
@@ -692,12 +706,12 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
         let args = parse_args(reader)?;
         match args.len() {
             6 => {
-                let x1 = args[0].parse().unwrap();
-                let y1 = args[1].parse().unwrap();
-                let x2 = args[2].parse().unwrap();
-                let y2 = args[3].parse().unwrap();
-                let t1 = args[4].parse().unwrap();
-                let t2 = args[4].parse().unwrap();
+                let x1 = args[0].parse()?;
+                let y1 = args[1].parse()?;
+                let x2 = args[2].parse()?;
+                let y2 = args[3].parse()?;
+                let t1 = args[4].parse()?;
+                let t2 = args[4].parse()?;
 
                 Code::Move { x1, y1, x2, y2, t1, t2 }
             }
