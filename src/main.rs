@@ -395,7 +395,7 @@ fn parse_file(path: impl AsRef<Path>) {
                 border_style: (),
                 outline: fields[mapping[&StyleField::Outline]].parse().unwrap(),
                 shadow: fields[mapping[&StyleField::Shadow]].parse().unwrap(),
-                alignment: Alignment(fields[mapping[&StyleField::Alignment]].parse().unwrap()),
+                alignment: fields[mapping[&StyleField::Alignment]].parse().unwrap(),
                 margin_l: fields[mapping[&StyleField::MarginL]].parse().unwrap(),
                 margin_r: fields[mapping[&StyleField::MarginR]].parse().unwrap(),
                 margin_v: fields[mapping[&StyleField::MarginV]].parse().unwrap(),
@@ -427,6 +427,7 @@ impl<'d> Reader<'d> {
         }
     }
 
+    #[must_use]
     fn consume(&mut self) -> Option<u8> {
         let x = self.buf[self.pos];
         self.pos += 1;
@@ -531,6 +532,15 @@ enum Code {
 
 #[derive(Debug)]
 struct Alignment(u8);
+
+impl FromStr for Alignment {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let value = s.parse().map_err(|_| ())?;
+        Ok(Alignment(value))
+    }
+}
 
 #[derive(Debug)]
 enum DrawCommand {
@@ -808,7 +818,7 @@ fn parse(s: &[u8]) -> Result<Vec<Part>, ReaderError> {
                 parts.push(Part::Overrides(codes));
             }
             b'\\' => {
-                reader.consume();
+                reader.expect(b'\\')?;
                 if reader.consume() == Some(b'n') {
                     buff.push(b'\n');
                 }
