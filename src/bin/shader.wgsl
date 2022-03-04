@@ -6,13 +6,21 @@ struct PushConst {
 
 var<push_constant> config: PushConst;
 
+struct TriangleIndices {
+    data: [[stride(4)]] array<u32>;
+};
+
+[[group(0), binding(0)]]
+var<storage, read> v_indices: TriangleIndices;
+
+
 [[stage(vertex)]]
 fn vs_main([[builtin(vertex_index)]] in_vertex_index: u32) -> [[builtin(position)]] vec4<f32> {
     let o = vec3<f32>(f32(config.width) * 0.5, f32(config.height) * 0.5, 1.0);
 
     let tau = 3.14 * 2.0;
     let r = min(f32(config.width) / 2.0, f32(config.height) / 2.0);
-    let alpha = f32(in_vertex_index) / f32(config.n) * tau;
+    let alpha = f32(v_indices.data[in_vertex_index]) / f32(config.n) * tau;
     let x = o.x + r * sin(alpha);
     let y = o.y + r * cos(alpha);
     let p = vec3<f32>(x, y, 1.0);
