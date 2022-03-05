@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use wgpu::{BindingType, BufferBindingType, IndexFormat, PrimitiveTopology, PushConstantRange, ShaderStages};
+use wgpu::{BindingType, BufferBindingType, FrontFace, IndexFormat, Label, PolygonMode, PrimitiveTopology, PushConstantRange, ShaderStages};
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -9,7 +9,7 @@ use winit::{
 };
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
-    let n = 10;
+    let n = 20;
 
     let size = window.inner_size();
     let instance = wgpu::Instance::new(wgpu::Backends::all());
@@ -55,9 +55,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         entry_point: "cs_main",
     });
 
-    let triangles_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    let triangles_indices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: std::mem::size_of::<u32>() as u64 * 3 * n as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+
+    let triangles_vertices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: "Vertex Buffer for triangles".into(),
+        size: 2 * std::mem::size_of::<u32>() as u64 * n as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
@@ -68,11 +75,19 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         layout: &compute_bind_group_layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
-            resource: triangles_buffer.as_entire_binding(),
+            resource: triangles_indices_buffer.as_entire_binding(),
         }],
     });
 
-
+    let compute_bind_group_layout2 = compute_pipeline.get_bind_group_layout(1);
+    let compute_bind_group2 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &compute_bind_group_layout2,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: triangles_vertices_buffer.as_entire_binding(),
+        }],
+    });
 
     // Load the shaders from disk
     let render_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
@@ -97,10 +112,26 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         ],
     });
 
+    let bind_layout2 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(8 * n as u64),
+                },
+                count: None,
+            }
+        ],
+    });
+
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
-        bind_group_layouts: &[&bind_layout],
+        bind_group_layouts: &[&bind_layout, &bind_layout2],
         push_constant_ranges: &[PushConstantRange {
             stages: ShaderStages::VERTEX,
             range: 0..12,
@@ -123,7 +154,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             targets: &[swapchain_format.into()],
         }),
         primitive: wgpu::PrimitiveState {
-            topology: PrimitiveTopology::LineStrip,
+            topology: PrimitiveTopology::TriangleList,
+            polygon_mode: PolygonMode::Fill,
+            cull_mode: None,
             ..wgpu::PrimitiveState::default()
         },
         depth_stencil: None,
@@ -137,7 +170,17 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         layout: &render_bind_group_layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
-            resource: triangles_buffer.as_entire_binding(),
+            resource: triangles_indices_buffer.as_entire_binding(),
+        }],
+    });
+
+    let render_bind_group_layout2 = render_pipeline.get_bind_group_layout(1);
+    let render_bind_group2 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &render_bind_group_layout2,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: triangles_vertices_buffer.as_entire_binding(),
         }],
     });
 
@@ -184,8 +227,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     });
                     cpass.set_pipeline(&compute_pipeline);
                     cpass.set_bind_group(0, &compute_bind_group, &[]);
-                    cpass.insert_debug_marker("compute collatz iterations");
-                    cpass.dispatch(n, 1, 1);
+                    cpass.set_bind_group(1, &compute_bind_group2, &[]);
+                    cpass.dispatch(1, 1, 1);
                 }
 
                 {
@@ -203,6 +246,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     });
                     rpass.set_pipeline(&render_pipeline);
                     rpass.set_bind_group(0, &render_bind_group, &[]);
+                    rpass.set_bind_group(1, &render_bind_group2, &[]);
                     rpass.set_push_constants(ShaderStages::VERTEX, 0, bytemuck::cast_slice(&[
                         n,
                         window.inner_size().width,
@@ -213,15 +257,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                 queue.submit(Some(encoder.finish()));
 
-                let buffer_slice = triangles_buffer.slice(..);
-                let fut = buffer_slice.map_async(wgpu::MapMode::Read);
-                device.poll(wgpu::Maintain::Wait);
-                pollster::block_on(fut).unwrap();
-                let data = buffer_slice.get_mapped_range();
-                let x = bytemuck::cast_slice::<_, u32>(&data);
-                dbg!(x);
-                drop(data);
-                triangles_buffer.unmap();
+                dump_buffer::<u32>(&device, &triangles_indices_buffer);
+                dump_buffer::<[f32; 2]>(&device, &triangles_vertices_buffer);
 
                 frame.present();
             }
@@ -232,6 +269,18 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             _ => {}
         }
     });
+}
+
+fn dump_buffer<T: bytemuck::Pod + std::fmt::Debug>(device: &wgpu::Device, buffer: &wgpu::Buffer) {
+    let buffer_slice = buffer.slice(..);
+    let future = buffer_slice.map_async(wgpu::MapMode::Read);
+    device.poll(wgpu::Maintain::Wait);
+    pollster::block_on(future).unwrap();
+    let data = buffer_slice.get_mapped_range();
+    let x = bytemuck::cast_slice::<_, T>(&data);
+    println!("{:?} = {:?}", &buffer, x);
+    drop(data);
+    buffer.unmap();
 }
 
 fn main() {

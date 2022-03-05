@@ -10,20 +10,20 @@ struct TriangleIndices {
     data: [[stride(4)]] array<u32>;
 };
 
+struct TriangleVertices {
+    data: [[stride(8)]] array<vec2<f32>>;
+};
+
 [[group(0), binding(0)]]
 var<storage, read> v_indices: TriangleIndices;
 
+[[group(1), binding(0)]]
+var<storage, read> v_vertices: TriangleVertices;
 
 [[stage(vertex)]]
 fn vs_main([[builtin(vertex_index)]] in_vertex_index: u32) -> [[builtin(position)]] vec4<f32> {
-    let o = vec3<f32>(f32(config.width) * 0.5, f32(config.height) * 0.5, 1.0);
-
-    let tau = 3.14 * 2.0;
-    let r = min(f32(config.width) / 2.0, f32(config.height) / 2.0);
-    let alpha = f32(v_indices.data[in_vertex_index]) / f32(config.n) * tau;
-    let x = o.x + r * sin(alpha);
-    let y = o.y + r * cos(alpha);
-    let p = vec3<f32>(x, y, 1.0);
+    let p2 = v_vertices.data[v_indices.data[in_vertex_index] ];
+    let p = vec3<f32>(p2.xy, 1.0);
 
     let m = mat2x3<f32>(
         2.0 / f32(config.width), 0.0, -1.0,
