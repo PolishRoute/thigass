@@ -478,6 +478,14 @@ impl<'d> Reader<'d> {
         n
     }
 
+    fn read_bool(&mut self) -> Result<bool, ReaderError> {
+        match self.consume() {
+            Some(b'0') => Ok(false),
+            Some(b'1') => Ok(true),
+            _ => Err(ReaderError::InvalidBool),
+        }
+    }
+
     fn expect(&mut self, b: u8) -> Result<(), ReaderError> {
         if self.try_consume(&[b]) {
             Ok(())
@@ -496,6 +504,7 @@ enum ReaderError {
     InvalidFloat,
     InvalidInt,
     InvalidChar,
+    InvalidBool,
 }
 
 #[derive(Debug)]
@@ -682,11 +691,11 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
             _ => todo!("{:?}", args)
         }
     } else if reader.try_consume(b"i") {
-        Code::Italic(reader.consume().unwrap() == b'1')
+        Code::Italic(reader.read_bool()?)
     } else if reader.try_consume(b"p") {
         Code::DrawScale(reader.read_float()?)
     } else if reader.try_consume(b"b") {
-        Code::Bold(reader.consume().unwrap() == b'1')
+        Code::Bold(reader.read_bool()?)
     } else if reader.try_consume(b"shad") {
         Code::Shadow(reader.read_float()?)
     } else if reader.try_consume(b"t") {
