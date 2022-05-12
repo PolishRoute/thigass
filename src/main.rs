@@ -1,9 +1,7 @@
 #![feature(let_else)]
 
-use std::{fmt, fs};
-use std::io::{BufRead, BufReader};
+use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
-use std::path::Path;
 use std::str::FromStr;
 
 use fxhash::FxBuildHasher;
@@ -124,8 +122,12 @@ enum Section {
 }
 
 fn main() {
+    let file_path = std::env::args().nth(1).expect("input file");
     let s = std::time::Instant::now();
-    parse_file("ReinForce_Kishuku_Gakkou_no_Juliet_07_BDRip_1920x1080_x264_FLAC.ass");
+    let script = std::fs::read(file_path).unwrap();
+    let utf8 = std::str::from_utf8(&script).unwrap();
+    let mut parser = ScriptParser::new(&utf8);
+    parser.parse();
     println!("File parsed in {:?}", s.elapsed());
 }
 
@@ -255,7 +257,7 @@ struct Style {
 fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHasher>> {
     let mut mapping = IndexMap::with_hasher(FxBuildHasher::default());
     for (idx, s) in s.split(", ").enumerate() {
-        let key = match s {
+        let key = match s.trim() {
             "Name" => StyleField::Name,
             "Fontname" => StyleField::FontName,
             "Fontsize" => StyleField::FontSize,
@@ -279,7 +281,7 @@ fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHa
             "MarginR" => StyleField::MarginR,
             "MarginV" => StyleField::MarginV,
             "Encoding" => StyleField::Encoding,
-            _ => unimplemented!(),
+            _ => unimplemented!("{}", s),
         };
         mapping.insert(key, idx);
     }
@@ -287,16 +289,157 @@ fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHa
     Some(mapping)
 }
 
-#[allow(unused)]
-fn parse_file(path: impl AsRef<Path>) {
-    let mut reader = BufReader::new(fs::File::open(path).unwrap());
-    let mut events_mapping = None;
-    let mut styles_mapping = None;
-    let mut current_section = None;
-    let mut buffer = String::new();
-    let mut styles = Vec::new();
+struct ScriptParser<'s> {
+    script: &'s str,
+    pos: usize,
+    events_mapping: Option<IndexMap<EventField, usize, FxBuildHasher>>,
+    styles_mapping: Option<IndexMap<StyleField, usize, FxBuildHasher>>,
+    line_number: usize,
+}
 
-    let parse_event = |data: &str, mapping: &IndexMap<EventField, usize, FxBuildHasher>, event_type: EventType, line_number: usize| {
+#[derive(Debug)]
+struct Script<'s> {
+    styles: Vec<Style>,
+    events: Vec<(EventType, Event<'s>)>,
+}
+
+impl<'s> ScriptParser<'s> {
+    fn new(script: &'s str) -> Self {
+        // TODO: BOM mark -- handle exotic encodings
+        let script = script.strip_prefix('\u{feff}')
+            .unwrap_or(script);
+
+        ScriptParser {
+            script,
+            pos: 0,
+            events_mapping: None,
+            styles_mapping: None,
+            line_number: 1,
+        }
+    }
+
+    fn next_line(&mut self) -> Option<&'s str> {
+        if self.pos >= self.script.len() {
+            return None;
+        }
+
+        let mut chars = self.script[self.pos..].chars().peekable();
+
+        let mut line_len = 0;
+        let mut ending_len = 0;
+        loop {
+            match (chars.next(), chars.peek()) {
+                (Some('\r'), Some('\n')) => {
+                    // DOS
+                    chars.next(); // Skip LF
+                    ending_len = 2;
+                    break;
+                }
+                (Some('\n'), _) => {
+                    // Unix
+                    ending_len = 1;
+                    break;
+                }
+                (Some(ch), _) => {
+                    line_len += ch.len_utf8();
+                }
+                (None, _) => break,
+            }
+        }
+
+        let line = &self.script[self.pos..][..line_len];
+        self.pos += line_len + ending_len;
+        self.line_number += 1;
+        Some(line)
+    }
+
+    fn parse(&mut self) -> Script<'s> {
+        let mut script = Script {
+            styles: Vec::new(),
+            events: Vec::new(),
+        };
+
+        let mut current_section = None;
+        let mut line_buffer = String::new();
+
+        while let Some(line) = self.next_line() {
+            if let Some(section) = line.strip_prefix("[") {
+                // Found a section eg. `[Events]`
+                current_section = match section.strip_suffix(']').unwrap() {
+                    "Events" => Some(Section::Events),
+                    "Script Info" => Some(Section::ScriptInto),
+                    "V4+ Styles" => Some(Section::V4Styles),
+                    _ => None,
+                };
+            } else if let Some(format) = line.strip_prefix("Format: ") {
+                // Found list of columns provided in lines below.
+
+                let Some(section) = current_section.as_ref() else {
+                    // Ignore when not in section
+                    continue;
+                };
+
+                match section {
+                    Section::Events => self.events_mapping = parse_events_mapping(format),
+                    Section::V4Styles => self.styles_mapping = parse_styles_mapping(format),
+                    _ => todo!(),
+                }
+            } else if let Some(x) = line.strip_prefix("Dialogue: ") {
+                script.events.push((EventType::Dialogue, self.parse_event(x)));
+            } else if let Some(x) = line.strip_prefix("Comment: ") {
+                script.events.push((EventType::Comment, self.parse_event(x)));
+            } else if let Some(s) = line.strip_prefix("Style: ") {
+                let style = self.parse_style(s);
+                script.styles.push(style);
+            } else if let Some((name, value)) = line.split_once(": ") {
+                println!("{} = {}", name, value);
+            } else if line.is_empty() || line.starts_with(";") {
+                continue;
+            } else {
+                println!(">> {:?}", line);
+            }
+
+            line_buffer.clear();
+        }
+
+        script
+    }
+
+    fn parse_style(&mut self, s: &str) -> Style {
+        let mapping = self.styles_mapping.as_ref().unwrap();
+        let fields = s.split(',').collect::<Vec<_>>();
+        let style = Style {
+            name: fields[mapping[&StyleField::Name]].to_string(),
+            font_name: fields[mapping[&StyleField::FontName]].parse().unwrap(),
+            font_size: fields[mapping[&StyleField::FontSize]].parse().unwrap(),
+            primary_colour: fields[mapping[&StyleField::PrimaryColour]].parse().unwrap(),
+            secondary_colour: fields[mapping[&StyleField::SecondaryColour]].parse().unwrap(),
+            outline_colour: fields[mapping[&StyleField::OutlineColour]].parse().unwrap(),
+            back_colour: fields[mapping[&StyleField::BackColour]].parse().unwrap(),
+            bold: fields[mapping[&StyleField::Bold]] == "1",
+            italic: fields[mapping[&StyleField::Italic]] == "1",
+            underline: fields[mapping[&StyleField::Underline]] == "1",
+            strike_out: fields[mapping[&StyleField::StrikeOut]] == "1",
+            scale_x: fields[mapping[&StyleField::ScaleX]].parse().unwrap(),
+            scale_y: fields[mapping[&StyleField::ScaleY]].parse().unwrap(),
+            spacing: fields[mapping[&StyleField::Spacing]].parse().unwrap(),
+            angle: fields[mapping[&StyleField::Angle]].parse().unwrap(),
+            border_style: (),
+            outline: fields[mapping[&StyleField::Outline]].parse().unwrap(),
+            shadow: fields[mapping[&StyleField::Shadow]].parse().unwrap(),
+            alignment: fields[mapping[&StyleField::Alignment]].parse().unwrap(),
+            margin_l: fields[mapping[&StyleField::MarginL]].parse().unwrap(),
+            margin_r: fields[mapping[&StyleField::MarginR]].parse().unwrap(),
+            margin_v: fields[mapping[&StyleField::MarginV]].parse().unwrap(),
+            encoding: (),
+        };
+
+        style
+    }
+
+    fn parse_event(&mut self, data: &'s str) -> Event<'s> {
+        let mapping = self.events_mapping.as_ref().unwrap();
+
         let fields = data.splitn(mapping.len(), ',').collect::<Vec<_>>();
         let event = Event {
             marked: mapping.get(&EventField::Marked).and_then(|idx| fields.get(*idx)) == Some(&"1"),
@@ -331,88 +474,18 @@ fn parse_file(path: impl AsRef<Path>) {
             }
             Err(r) => todo!("{:?}", r),
         }
-    };
 
-    enum EventType {
-        Dialogue,
-        Comment,
-    }
-
-    let mut line_number = 0;
-
-    loop {
-        buffer.clear();
-        let line = match reader.read_line(&mut buffer) {
-            Ok(0) => break,
-            Ok(_) => {
-                let buf = buffer.trim_end();
-                buf.strip_prefix('\u{feff}').unwrap_or(buf)
-            },
-            Err(e) => panic!("{:?}", e),
-        };
-        line_number += 1;
-
-        if let Some(section) = line.strip_prefix("[") {
-            current_section = match section.strip_suffix(']').unwrap() {
-                "Events" => Some(Section::Events),
-                "Script Info" => Some(Section::ScriptInto),
-                "V4+ Styles" => Some(Section::V4Styles),
-                _ => None,
-            };
-        } else if let Some(format) = line.strip_prefix("Format: ") {
-            let Some(section) = current_section.as_ref() else {
-                continue;
-            };
-
-            match section {
-                Section::Events => events_mapping = parse_events_mapping(format),
-                Section::V4Styles => styles_mapping = parse_styles_mapping(format),
-                _ => todo!(),
-            }
-        } else if let Some(x) = line.strip_prefix("Dialogue: ") {
-            parse_event(x, events_mapping.as_ref().unwrap(), EventType::Dialogue, line_number);
-        } else if let Some(x) = line.strip_prefix("Comment: ") {
-            parse_event(x, events_mapping.as_ref().unwrap(), EventType::Comment, line_number);
-        } else if let Some(s) = line.strip_prefix("Style: ") {
-            let mapping = styles_mapping.as_ref().unwrap();
-            let fields = s.split(',').collect::<Vec<_>>();
-            let style = Style {
-                name: fields[mapping[&StyleField::Name]].to_string(),
-                font_name: fields[mapping[&StyleField::FontName]].parse().unwrap(),
-                font_size: fields[mapping[&StyleField::FontSize]].parse().unwrap(),
-                primary_colour: fields[mapping[&StyleField::PrimaryColour]].parse().unwrap(),
-                secondary_colour: fields[mapping[&StyleField::SecondaryColour]].parse().unwrap(),
-                outline_colour: fields[mapping[&StyleField::OutlineColour]].parse().unwrap(),
-                back_colour: fields[mapping[&StyleField::BackColour]].parse().unwrap(),
-                bold: fields[mapping[&StyleField::Bold]] == "1",
-                italic: fields[mapping[&StyleField::Italic]] == "1",
-                underline: fields[mapping[&StyleField::Underline]] == "1",
-                strike_out: fields[mapping[&StyleField::StrikeOut]] == "1",
-                scale_x: fields[mapping[&StyleField::ScaleX]].parse().unwrap(),
-                scale_y: fields[mapping[&StyleField::ScaleY]].parse().unwrap(),
-                spacing: fields[mapping[&StyleField::Spacing]].parse().unwrap(),
-                angle: fields[mapping[&StyleField::Angle]].parse().unwrap(),
-                border_style: (),
-                outline: fields[mapping[&StyleField::Outline]].parse().unwrap(),
-                shadow: fields[mapping[&StyleField::Shadow]].parse().unwrap(),
-                alignment: fields[mapping[&StyleField::Alignment]].parse().unwrap(),
-                margin_l: fields[mapping[&StyleField::MarginL]].parse().unwrap(),
-                margin_r: fields[mapping[&StyleField::MarginR]].parse().unwrap(),
-                margin_v: fields[mapping[&StyleField::MarginV]].parse().unwrap(),
-                encoding: (),
-            };
-            styles.push(style);
-        } else if let Some((name, value)) = line.split_once(": ") {
-            // println!("{} = {}", name, value);
-        } else if line.is_empty() || line.starts_with(";") {
-            continue;
-        } else {
-            println!(">> {:?}", line);
-        }
-
-        buffer.clear();
+        event
     }
 }
+
+
+#[derive(Debug)]
+enum EventType {
+    Dialogue,
+    Comment,
+}
+
 
 struct Reader<'d> {
     buf: &'d [u8],
@@ -470,7 +543,7 @@ impl<'d> Reader<'d> {
         x.to_string()
     }
 
-    fn read_number(&mut self) -> u32 {
+    fn read_integer(&mut self) -> u32 {
         let mut n = 0;
         for b in self.take_while(|c| c.is_ascii_digit()).iter().copied() {
             n = n * 10 + (b - b'0') as u32;
@@ -640,7 +713,7 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
     Ok(if reader.try_consume(b"n") || reader.try_consume(b"N") {
         Code::NewLine
     } else if reader.try_consume(b"an") {
-        Code::Align(Alignment(reader.read_number() as u8))
+        Code::Align(Alignment(reader.read_integer() as u8))
     } else if reader.try_consume(b"blur") {
         Code::Blur(reader.read_float()?)
     } else if reader.try_consume(b"bord") {
@@ -748,7 +821,7 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
     } else if reader.try_consume(b"yshad") {
         Code::YShadow(reader.read_float()?)
     } else if reader.try_consume(b"q") {
-        Code::WrappingStyle(reader.read_number())
+        Code::WrappingStyle(reader.read_integer())
     } else if reader.try_consume(b"r") {
         Code::Reset
     } else if reader.try_consume(b"c") {
@@ -756,7 +829,7 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
     } else if reader.try_consume(b"alpha") {
         Code::Alpha(None, parse_alpha(reader)?)
     } else if let Some(b'0'..=b'9') = reader.peek() {
-        let n = reader.read_number();
+        let n = reader.read_integer();
         match reader.consume() {
             Some(b'c') => Code::Color(Some(n), parse_color(reader)?),
             Some(b'a') => Code::Alpha(Some(n), parse_alpha(reader)?),
