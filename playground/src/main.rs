@@ -257,8 +257,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                 queue.submit(Some(encoder.finish()));
 
-                dump_buffer::<u32>(&device, &triangles_indices_buffer);
-                dump_buffer::<[f32; 2]>(&device, &triangles_vertices_buffer);
+                // dump_buffer::<u32>(&device, &triangles_indices_buffer);
+                // dump_buffer::<[f32; 2]>(&device, &triangles_vertices_buffer);
 
                 frame.present();
             }
