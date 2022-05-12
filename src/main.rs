@@ -501,6 +501,7 @@ enum ReaderError {
 #[derive(Debug)]
 #[allow(unused)]
 enum Code {
+    NewLine,
     Align(Alignment),
     Blur(f32),
     Border(f32),
@@ -520,6 +521,7 @@ enum Code {
     Clip(Vec<DrawCommand>),
     ClipRect(f32, f32, f32, f32),
     Bold(bool),
+    Italic(bool),
     Shadow(f32),
     XShadow(f32),
     YShadow(f32),
@@ -626,7 +628,9 @@ impl From<ParseFloatError> for ReaderError {
 
 fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
     reader.expect(b'\\')?;
-    Ok(if reader.try_consume(b"an") {
+    Ok(if reader.try_consume(b"n") || reader.try_consume(b"N") {
+        Code::NewLine
+    } else if reader.try_consume(b"an") {
         Code::Align(Alignment(reader.read_number() as u8))
     } else if reader.try_consume(b"blur") {
         Code::Blur(reader.read_float()?)
@@ -677,6 +681,8 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
             ),
             _ => todo!("{:?}", args)
         }
+    } else if reader.try_consume(b"i") {
+        Code::Italic(reader.consume().unwrap() == b'1')
     } else if reader.try_consume(b"p") {
         Code::DrawScale(reader.read_float()?)
     } else if reader.try_consume(b"b") {
