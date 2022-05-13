@@ -870,43 +870,74 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ReaderError> {
 enum Part {
     Text(String),
     Overrides(Vec<Code>),
+    NewLine { smart_wrapping: bool },
+}
+
+struct PartsBuilder {
+    parts: Vec<Part>,
+    buf: Vec<u8>,
+}
+
+impl PartsBuilder {
+    fn new() -> Self {
+        Self {
+            parts: Vec::new(),
+            buf: Vec::new(),
+        }
+    }
+
+    fn finalize_buf(&mut self) {
+        if !self.buf.is_empty() {
+            let text = String::from_utf8_lossy(&self.buf).into_owned();
+            self.parts.push(Part::Text(text));
+            self.buf.clear();
+        }
+    }
+
+    fn push_part(&mut self, part: Part) {
+        self.finalize_buf();
+        self.parts.push(part);
+    }
+
+    fn push_byte(&mut self, byte: u8) {
+        self.buf.push(byte);
+    }
+
+    fn into_parts(mut self) -> Vec<Part> {
+        self.finalize_buf();
+        self.parts
+    }
 }
 
 fn parse(s: &[u8]) -> Result<Vec<Part>, ReaderError> {
-    let mut parts = Vec::new();
-
-    let mut buff = Vec::new();
+    let mut builder = PartsBuilder::new();
     let mut reader = Reader::new(s);
     while let Some(x) = reader.peek() {
         match x {
             b'{' => {
-                if !buff.is_empty() {
-                    parts.push(Part::Text(String::from_utf8_lossy(&buff).into_owned()));
-                }
-
                 reader.expect(b'{')?;
                 let codes = parse_overrides(&mut reader)?;
                 reader.expect(b'}')?;
-
-                parts.push(Part::Overrides(codes));
+                if !codes.is_empty() {
+                    builder.push_part(Part::Overrides(codes));
+                }
             }
             b'\\' => {
                 reader.expect(b'\\')?;
-                if reader.consume() == Some(b'n') {
-                    buff.push(b'\n');
+                match reader.consume() {
+                    Some(b'n') => builder.push_part(Part::NewLine { smart_wrapping: false }),
+                    Some(b'N') => builder.push_part(Part::NewLine { smart_wrapping: true }),
+                    _ => {
+                        // Ignore
+                    }
                 }
             }
             _ => {
-                buff.push(reader.consume().unwrap());
+                builder.push_byte(reader.consume().unwrap());
             }
         }
     }
-
-    if !buff.is_empty() {
-        parts.push(Part::Text(String::from_utf8_lossy(&buff).into_owned()));
-    }
-
-    Ok(parts)
+    Ok(builder.into_parts())
 }
 
 #[cfg(test)]
