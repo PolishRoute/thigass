@@ -1,3 +1,4 @@
+#![feature(derive_default_enum)]
 #![feature(let_else)]
 
 use std::fmt;
@@ -120,8 +121,9 @@ enum Section {
     V4Styles,
 }
 
+#[derive(Debug, Default)]
 pub struct ScriptInfo {
-    pub wrap_style: u32,
+    pub wrap_style: WrapStyle,
     pub scaled_border_and_shadow: bool,
     pub title: String,
     pub play_res_x: u32,
@@ -136,6 +138,29 @@ pub struct ScriptInfo {
     pub video_zoom_percent: f32,
     pub active_line: u32,
     pub video_position: u32,
+}
+
+#[derive(Debug, Default)]
+pub enum WrapStyle {
+    #[default]
+    Smart,
+    EndOfLine,
+    NoWordWrapping,
+    SmartWithWiderLowerLine,
+}
+
+impl FromStr for WrapStyle {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "0" => Ok(Self::Smart),
+            "1" => Ok(Self::EndOfLine),
+            "2" => Ok(Self::NoWordWrapping),
+            "3" => Ok(Self::SmartWithWiderLowerLine),
+            _ => Err(())
+        }
+    }
 }
 
 #[derive(Hash, Eq, PartialEq)]
@@ -285,6 +310,7 @@ pub struct ScriptParser<'s> {
 
 #[derive(Debug)]
 pub struct Script<'s> {
+    pub info: ScriptInfo,
     pub styles: Vec<Style>,
     pub events: Vec<(EventType, Event<'s>)>,
 }
@@ -343,6 +369,7 @@ impl<'s> ScriptParser<'s> {
         let mut script = Script {
             styles: Vec::new(),
             events: Vec::new(),
+            info: ScriptInfo::default(),
         };
 
         let mut current_section = None;
@@ -377,7 +404,26 @@ impl<'s> ScriptParser<'s> {
                 let style = self.parse_style(s);
                 script.styles.push(style);
             } else if let Some((name, value)) = line.split_once(": ") {
-                println!("{} = {}", name, value);
+                match name {
+                    "WrapStyle" => script.info.wrap_style = value.parse().unwrap(),
+                    "ScaledBorderAndShadow" => script.info.scaled_border_and_shadow = value == "yes",
+                    "Title" => script.info.title = value.to_string(),
+                    "PlayResX" => script.info.play_res_x = value.parse().unwrap(),
+                    "PlayResY" => script.info.play_res_y = value.parse().unwrap(),
+                    "ScriptType" => script.info.script_type = value.parse().unwrap(),
+                    "YCbCr Matrix" => script.info.ycb_cr_matrix = value.parse().unwrap(),
+                    "Original Translation" => script.info.original_translation = value.parse().unwrap(),
+                    "Last Style Storage" => script.info.last_style_storage = value.parse().unwrap(),
+                    "Audio File" => script.info.audio_file = value.parse().unwrap(),
+                    "Video File" => script.info.video_file = value.parse().unwrap(),
+                    "Video AR Value" => script.info.video_ar_value = value.parse().unwrap(),
+                    "Video Zoom Percent" => script.info.video_zoom_percent = value.parse().unwrap(),
+                    "Active Line" => script.info.active_line = value.parse().unwrap(),
+                    "Video Position" => script.info.video_position = value.parse().unwrap(),
+                    _ => {
+                        println!("{} = {}", name, value);
+                    }
+                }
             } else if line.is_empty() || line.starts_with(";") {
                 continue;
             } else {
@@ -488,7 +534,7 @@ impl<'d> Reader<'d> {
 
     #[must_use]
     fn consume(&mut self) -> Option<u8> {
-        let x = self.buf[self.pos];
+        let x = self.buf.get(self.pos).copied()?;
         self.pos += 1;
         Some(x)
     }
@@ -822,6 +868,7 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
         }
     } else {
         reader.dbg();
+        panic!();
         return Err(ReaderError::InvalidChar);
     })
 }
