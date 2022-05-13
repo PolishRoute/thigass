@@ -1,2 +1,2 @@
 [workspace]
-members = ["parser", "playground"]
+members = ["parser", "playground", "tester"]

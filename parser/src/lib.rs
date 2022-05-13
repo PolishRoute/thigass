@@ -7,7 +7,7 @@ use std::str::FromStr;
 use fxhash::FxBuildHasher;
 use indexmap::IndexMap;
 
-struct Timestamp {
+pub struct Timestamp {
     value: u64,
 }
 
@@ -23,7 +23,7 @@ impl fmt::Debug for Timestamp {
 }
 
 #[derive(Debug)]
-enum TimestampError {
+pub enum TimestampError {
     Todo,
 }
 
@@ -61,19 +61,18 @@ mod tests {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
-struct Event<'s> {
-    marked: bool,
-    layer: i32,
-    start: Timestamp,
-    end: Timestamp,
-    style: &'s str,
-    name: &'s str,
-    margin_l: Option<u32>,
-    margin_r: Option<u32>,
-    margin_v: Option<u32>,
-    effect: &'s str,
-    text: &'s str,
+pub struct Event<'s> {
+    pub marked: bool,
+    pub layer: i32,
+    pub start: Timestamp,
+    pub end: Timestamp,
+    pub style: &'s str,
+    pub name: &'s str,
+    pub margin_l: Option<u32>,
+    pub margin_r: Option<u32>,
+    pub margin_v: Option<u32>,
+    pub effect: &'s str,
+    pub text: &'s str,
 }
 
 #[derive(Hash, Eq, PartialEq)]
@@ -121,33 +120,22 @@ enum Section {
     V4Styles,
 }
 
-fn main() {
-    let file_path = std::env::args().nth(1).expect("input file");
-    let s = std::time::Instant::now();
-    let script = std::fs::read(file_path).unwrap();
-    let utf8 = std::str::from_utf8(&script).unwrap();
-    let mut parser = ScriptParser::new(&utf8);
-    parser.parse();
-    println!("File parsed in {:?}", s.elapsed());
-}
-
-#[allow(unused)]
-struct ScriptInfo {
-    wrap_style: u32,
-    scaled_border_and_shadow: bool,
-    title: String,
-    play_res_x: u32,
-    play_res_y: u32,
-    script_type: String,
-    ycb_cr_matrix: String,
-    original_translation: String,
-    last_style_storage: String,
-    audio_file: String,
-    video_file: String,
-    video_ar_value: f32,
-    video_zoom_percent: f32,
-    active_line: u32,
-    video_position: u32,
+pub struct ScriptInfo {
+    pub wrap_style: u32,
+    pub scaled_border_and_shadow: bool,
+    pub title: String,
+    pub play_res_x: u32,
+    pub play_res_y: u32,
+    pub script_type: String,
+    pub ycb_cr_matrix: String,
+    pub original_translation: String,
+    pub last_style_storage: String,
+    pub audio_file: String,
+    pub video_file: String,
+    pub video_ar_value: f32,
+    pub video_zoom_percent: f32,
+    pub active_line: u32,
+    pub video_position: u32,
 }
 
 #[derive(Hash, Eq, PartialEq)]
@@ -178,12 +166,11 @@ enum StyleField {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
-struct Color {
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
 }
 
 impl FromStr for Color {
@@ -227,31 +214,30 @@ impl FromStr for Color {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
-struct Style {
-    name: String,
-    font_name: String,
-    font_size: f32,
-    primary_colour: Color,
-    secondary_colour: Color,
-    outline_colour: Color,
-    back_colour: Color,
-    bold: bool,
-    italic: bool,
-    underline: bool,
-    strike_out: bool,
-    scale_x: f32,
-    scale_y: f32,
-    spacing: f32,
-    angle: f32,
-    border_style: (),
-    outline: f32,
-    shadow: f32,
-    alignment: Alignment,
-    margin_l: f32,
-    margin_r: f32,
-    margin_v: f32,
-    encoding: (),
+pub struct Style {
+    pub name: String,
+    pub font_name: String,
+    pub font_size: f32,
+    pub primary_colour: Color,
+    pub secondary_colour: Color,
+    pub outline_colour: Color,
+    pub back_colour: Color,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike_out: bool,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub spacing: f32,
+    pub angle: f32,
+    pub border_style: (),
+    pub outline: f32,
+    pub shadow: f32,
+    pub alignment: Alignment,
+    pub margin_l: f32,
+    pub margin_r: f32,
+    pub margin_v: f32,
+    pub encoding: (),
 }
 
 fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHasher>> {
@@ -289,7 +275,7 @@ fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHa
     Some(mapping)
 }
 
-struct ScriptParser<'s> {
+pub struct ScriptParser<'s> {
     script: &'s str,
     pos: usize,
     events_mapping: Option<IndexMap<EventField, usize, FxBuildHasher>>,
@@ -298,13 +284,13 @@ struct ScriptParser<'s> {
 }
 
 #[derive(Debug)]
-struct Script<'s> {
-    styles: Vec<Style>,
-    events: Vec<(EventType, Event<'s>)>,
+pub struct Script<'s> {
+    pub styles: Vec<Style>,
+    pub events: Vec<(EventType, Event<'s>)>,
 }
 
 impl<'s> ScriptParser<'s> {
-    fn new(script: &'s str) -> Self {
+    pub fn new(script: &'s str) -> Self {
         // TODO: BOM mark -- handle exotic encodings
         let script = script.strip_prefix('\u{feff}')
             .unwrap_or(script);
@@ -353,14 +339,13 @@ impl<'s> ScriptParser<'s> {
         Some(line)
     }
 
-    fn parse(&mut self) -> Script<'s> {
+    pub fn parse(&mut self) -> Script<'s> {
         let mut script = Script {
             styles: Vec::new(),
             events: Vec::new(),
         };
 
         let mut current_section = None;
-        let mut line_buffer = String::new();
 
         while let Some(line) = self.next_line() {
             if let Some(section) = line.strip_prefix("[") {
@@ -398,8 +383,6 @@ impl<'s> ScriptParser<'s> {
             } else {
                 println!(">> {:?}", line);
             }
-
-            line_buffer.clear();
         }
 
         script
@@ -424,14 +407,18 @@ impl<'s> ScriptParser<'s> {
             scale_y: fields[mapping[&StyleField::ScaleY]].parse().unwrap(),
             spacing: fields[mapping[&StyleField::Spacing]].parse().unwrap(),
             angle: fields[mapping[&StyleField::Angle]].parse().unwrap(),
-            border_style: (),
+            border_style: {
+                println!("BorderStyle: {}", &fields[mapping[&StyleField::BorderStyle]]);
+            },
             outline: fields[mapping[&StyleField::Outline]].parse().unwrap(),
             shadow: fields[mapping[&StyleField::Shadow]].parse().unwrap(),
             alignment: fields[mapping[&StyleField::Alignment]].parse().unwrap(),
             margin_l: fields[mapping[&StyleField::MarginL]].parse().unwrap(),
             margin_r: fields[mapping[&StyleField::MarginR]].parse().unwrap(),
             margin_v: fields[mapping[&StyleField::MarginV]].parse().unwrap(),
-            encoding: (),
+            encoding: {
+                println!("Encoding: {}", &fields[mapping[&StyleField::Encoding]]);
+            },
         };
 
         style
@@ -481,11 +468,10 @@ impl<'s> ScriptParser<'s> {
 
 
 #[derive(Debug)]
-enum EventType {
+pub enum EventType {
     Dialogue,
     Comment,
 }
-
 
 struct Reader<'d> {
     buf: &'d [u8],
@@ -581,8 +567,7 @@ enum ReaderError {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
-enum Code {
+pub enum Code {
     NewLine,
     Align(Alignment),
     Blur(f32),
@@ -615,7 +600,7 @@ enum Code {
 }
 
 #[derive(Debug)]
-struct Alignment(u8);
+pub struct Alignment(u8);
 
 impl FromStr for Alignment {
     type Err = ();
@@ -627,7 +612,7 @@ impl FromStr for Alignment {
 }
 
 #[derive(Debug)]
-enum DrawCommand {
+pub enum DrawCommand {
     CloseAndMove(f32, f32),
     Move(f32, f32),
     Line(f32, f32),
