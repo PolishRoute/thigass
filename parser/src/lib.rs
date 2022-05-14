@@ -608,8 +608,7 @@ pub enum ReaderError {
 }
 
 #[derive(Debug)]
-pub enum Code {
-    NewLine,
+pub enum Effect {
     Align(Alignment),
     Blur(f32),
     Border(f32),
@@ -622,11 +621,11 @@ pub enum Code {
     RotateX(f32),
     RotateY(f32),
     RotateZ(f32),
-    Color(Option<u32>, Color),
-    Alpha(Option<u32>, u8),
+    Color { index: Option<u32>, color: Color },
+    Alpha { index: Option<u32>, value: u8 },
     Pos(f32, f32),
     DrawScale(f32),
-    Clip(Vec<DrawCommand>),
+    Clip { mask: Vec<DrawCommand> },
     ClipRect(f32, f32, f32, f32),
     Bold(bool),
     Italic(bool),
@@ -635,9 +634,10 @@ pub enum Code {
     YShadow(f32),
     WrappingStyle(u32),
     Reset,
-    Transition { t1: Option<f32>, t2: Option<f32>, accel: Option<f32>, style: Vec<Code> },
+    Transition { t1: Option<f32>, t2: Option<f32>, accel: Option<f32>, style: Vec<Effect> },
     Fade { t1: f32, t2: f32 },
     Move { x1: f32, y1: f32, x2: f32, y2: f32, t1: f32, t2: f32 },
+    NewLine { smart_wrapping: bool },
 }
 
 #[derive(Debug)]
@@ -734,45 +734,47 @@ impl From<ParseFloatError> for ReaderError {
     }
 }
 
-fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
+fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
     reader.expect(b'\\')?;
-    Ok(if reader.try_consume(b"n") || reader.try_consume(b"N") {
-        Code::NewLine
+    Ok(if reader.try_consume(b"n") {
+        Effect::NewLine { smart_wrapping: false }
+    } else if reader.try_consume(b"N'") {
+        Effect::NewLine { smart_wrapping: true }
     } else if reader.try_consume(b"an") {
-        Code::Align(Alignment(reader.read_integer() as u8))
+        Effect::Align(Alignment(reader.read_integer() as u8))
     } else if reader.try_consume(b"blur") {
-        Code::Blur(reader.read_float()?)
+        Effect::Blur(reader.read_float()?)
     } else if reader.try_consume(b"bord") {
-        Code::Border(reader.read_float()?)
+        Effect::Border(reader.read_float()?)
     } else if reader.try_consume(b"xbord") {
-        Code::XBorder(reader.read_float()?)
+        Effect::XBorder(reader.read_float()?)
     } else if reader.try_consume(b"ybord") {
-        Code::YBorder(reader.read_float()?)
+        Effect::YBorder(reader.read_float()?)
     } else if reader.try_consume(b"fn") {
-        Code::FontName(reader.read_string())
+        Effect::FontName(reader.read_string())
     } else if reader.try_consume(b"fscx") {
-        Code::FontScaleX(reader.read_float()?)
+        Effect::FontScaleX(reader.read_float()?)
     } else if reader.try_consume(b"fscy") {
-        Code::FontScaleY(reader.read_float()?)
+        Effect::FontScaleY(reader.read_float()?)
     } else if reader.try_consume(b"fs") {
-        Code::FontSize(reader.read_float()?)
+        Effect::FontSize(reader.read_float()?)
     } else if reader.try_consume(b"frx") {
-        Code::RotateX(reader.read_float()?)
+        Effect::RotateX(reader.read_float()?)
     } else if reader.try_consume(b"fry") {
-        Code::RotateY(reader.read_float()?)
+        Effect::RotateY(reader.read_float()?)
     } else if reader.try_consume(b"frz") {
-        Code::RotateZ(reader.read_float()?)
+        Effect::RotateZ(reader.read_float()?)
     } else if reader.try_consume(b"fax") {
-        Code::RotateZ(reader.read_float()?)
+        Effect::RotateZ(reader.read_float()?)
     } else if reader.try_consume(b"clip") {
         let args = parse_args(reader)?;
         match args[..] {
             [curve] => {
                 let mut reader = Reader::new(curve.as_bytes());
                 let cmds = parse_curve(&mut reader)?;
-                Code::Clip(cmds)
+                Effect::Clip { mask: cmds }
             }
-            [x1, y1, x2, y2] => Code::ClipRect(
+            [x1, y1, x2, y2] => Effect::ClipRect(
                 x1.parse()?,
                 y1.parse()?,
                 x2.parse()?,
@@ -783,36 +785,36 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
     } else if reader.try_consume(b"pos") {
         let args = parse_args(reader)?;
         match args[..] {
-            [x, y] => Code::Pos(
+            [x, y] => Effect::Pos(
                 x.parse()?,
                 y.parse()?,
             ),
             _ => todo!("{:?}", args)
         }
     } else if reader.try_consume(b"i") {
-        Code::Italic(reader.read_bool()?)
+        Effect::Italic(reader.read_bool()?)
     } else if reader.try_consume(b"p") {
-        Code::DrawScale(reader.read_float()?)
+        Effect::DrawScale(reader.read_float()?)
     } else if reader.try_consume(b"b") {
-        Code::Bold(reader.read_bool()?)
+        Effect::Bold(reader.read_bool()?)
     } else if reader.try_consume(b"shad") {
-        Code::Shadow(reader.read_float()?)
+        Effect::Shadow(reader.read_float()?)
     } else if reader.try_consume(b"t") {
         let args = parse_args(reader)?;
         match args[..] {
-            [t1, t2, accel, style] => Code::Transition {
+            [t1, t2, accel, style] => Effect::Transition {
                 t1: Some(t1.parse()?),
                 t2: Some(t2.parse()?),
                 accel: Some(accel.parse()?),
                 style: read_style(style.as_bytes())?,
             },
-            [t1, t2, style] => Code::Transition {
+            [t1, t2, style] => Effect::Transition {
                 t1: Some(t1.parse()?),
                 t2: Some(t2.parse()?),
                 accel: None,
                 style: read_style(style.as_bytes())?,
             },
-            [style] => Code::Transition {
+            [style] => Effect::Transition {
                 t1: None,
                 t2: None,
                 accel: None,
@@ -823,7 +825,7 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
     } else if reader.try_consume(b"fad") {
         let args = parse_args(reader)?;
         match args[..] {
-            [t1, t2] => Code::Fade {
+            [t1, t2] => Effect::Fade {
                 t1: t1.parse()?,
                 t2: t2.parse()?,
             },
@@ -832,7 +834,7 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
     } else if reader.try_consume(b"move") {
         let args = parse_args(reader)?;
         match args[..] {
-            [x1, y1, x2, y2, t1, t2] => Code::Move {
+            [x1, y1, x2, y2, t1, t2] => Effect::Move {
                 x1: x1.parse()?,
                 y1: y1.parse()?,
                 x2: x2.parse()?,
@@ -843,27 +845,38 @@ fn parse_override(reader: &mut Reader) -> Result<Code, ReaderError> {
             _ => todo!("{:?}", args)
         }
     } else if reader.try_consume(b"xshad") {
-        Code::XShadow(reader.read_float()?)
+        Effect::XShadow(reader.read_float()?)
     } else if reader.try_consume(b"yshad") {
-        Code::YShadow(reader.read_float()?)
+        Effect::YShadow(reader.read_float()?)
     } else if reader.try_consume(b"q") {
-        Code::WrappingStyle(reader.read_integer())
+        Effect::WrappingStyle(reader.read_integer())
     } else if reader.try_consume(b"r") {
-        Code::Reset
+        Effect::Reset
     } else if reader.try_consume(b"c") {
-        Code::Color(None, parse_color(reader)?)
+        Effect::Color {
+            index: None,
+            color: parse_color(reader)?
+        }
     } else if reader.try_consume(b"alpha") {
-        Code::Alpha(None, parse_alpha(reader)?)
+        Effect::Alpha {
+            index: None,
+            value: parse_alpha(reader)?
+        }
     } else if let Some(b'0'..=b'9') = reader.peek() {
         let n = reader.read_integer();
         match reader.consume() {
-            Some(b'c') => Code::Color(Some(n), parse_color(reader)?),
-            Some(b'a') => Code::Alpha(Some(n), parse_alpha(reader)?),
+            Some(b'c') => Effect::Color {
+                index: Some(n),
+                color: parse_color(reader)?
+            },
+            Some(b'a') => Effect::Alpha {
+                index: Some(n),
+                value: parse_alpha(reader)?
+            },
             oth => todo!("{:?}", oth),
         }
     } else {
         reader.dbg();
-        panic!();
         return Err(ReaderError::InvalidChar);
     })
 }
@@ -884,17 +897,17 @@ fn parse_alpha(reader: &mut Reader) -> Result<u8, ReaderError> {
     Ok(u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap())
 }
 
-fn read_style(s: &[u8]) -> Result<Vec<Code>, ReaderError> {
+fn read_style(s: &[u8]) -> Result<Vec<Effect>, ReaderError> {
     let mut reader = Reader::new(s);
     parse_overrides(&mut reader)
 }
 
-fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ReaderError> {
+fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ReaderError> {
     let mut items = Vec::new();
     while let Some(x) = reader.peek() {
         match x {
             b'\\' => {
-                items.push(parse_override(reader)?);
+                items.push(parse_effect(reader)?);
             }
             b'}' => {
                 break;
@@ -911,7 +924,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ReaderError> {
 #[derive(Debug)]
 pub enum Part {
     Text(String),
-    Overrides(Vec<Code>),
+    Overrides(Vec<Effect>),
     NewLine { smart_wrapping: bool },
 }
 
@@ -958,10 +971,10 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ReaderError> {
         match x {
             b'{' => {
                 reader.expect(b'{')?;
-                let codes = parse_overrides(&mut reader)?;
+                let effects = parse_overrides(&mut reader)?;
                 reader.expect(b'}')?;
-                if !codes.is_empty() {
-                    builder.push_part(Part::Overrides(codes));
+                if !effects.is_empty() {
+                    builder.push_part(Part::Overrides(effects));
                 }
             }
             b'\\' => {
