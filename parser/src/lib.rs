@@ -754,7 +754,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
     reader.expect(b'\\')?;
     Ok(if reader.try_consume(b"n") {
         Effect::NewLine { smart_wrapping: false }
-    } else if reader.try_consume(b"N'") {
+    } else if reader.try_consume(b"N") {
         Effect::NewLine { smart_wrapping: true }
     } else if reader.try_consume(b"an") {
         Effect::Align(Alignment(reader.read_integer() as u8))
