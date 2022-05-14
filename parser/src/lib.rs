@@ -616,6 +616,7 @@ impl<'d> Reader<'d> {
 
 #[derive(Debug)]
 pub enum ReaderError {
+    UnsupportedEffect(String),
     InvalidFloat,
     InvalidInt,
     InvalidChar,
@@ -891,8 +892,13 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
             oth => todo!("{:?}", oth),
         }
     } else {
-        reader.dbg();
-        return Err(ReaderError::InvalidChar);
+        let name = reader.take_while(|b| b.is_ascii_alphabetic());
+        if name.is_empty() {
+            reader.dbg();
+            return Err(ReaderError::InvalidChar);
+        } else {
+            return Err(ReaderError::UnsupportedEffect(String::from_utf8_lossy(name).into_owned()));
+        }
     })
 }
 
