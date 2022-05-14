@@ -117,7 +117,7 @@ fn parse_events_mapping(config: &str) -> Option<IndexMap<EventField, usize, FxBu
 #[derive(Eq, PartialEq, Debug)]
 enum Section {
     Events,
-    ScriptInto,
+    ScriptInfo,
     V4Styles,
 }
 
@@ -379,7 +379,7 @@ impl<'s> ScriptParser<'s> {
                 // Found a section eg. `[Events]`
                 current_section = match section.strip_suffix(']').unwrap() {
                     "Events" => Some(Section::Events),
-                    "Script Info" => Some(Section::ScriptInto),
+                    "Script Info" => Some(Section::ScriptInfo),
                     "V4+ Styles" => Some(Section::V4Styles),
                     _ => None,
                 };
@@ -404,24 +404,41 @@ impl<'s> ScriptParser<'s> {
                 let style = self.parse_style(s);
                 script.styles.push(style);
             } else if let Some((name, value)) = line.split_once(": ") {
+                macro_rules! parse_or_skip {
+                    ($s:expr) => {
+                        match $s.parse() {
+                            Ok(value) => value,
+                            Err(err) => {
+                                println!("Invalid value {:?}", err);
+                                continue;
+                            }
+                        }
+                    };
+                }
+
+                if current_section != Some(Section::ScriptInfo) {
+                    // Not supported section
+                    continue;
+                }
+
                 match name {
-                    "WrapStyle" => script.info.wrap_style = value.parse().unwrap(),
+                    "WrapStyle" => script.info.wrap_style = parse_or_skip!(value),
                     "ScaledBorderAndShadow" => script.info.scaled_border_and_shadow = value == "yes",
                     "Title" => script.info.title = value.to_string(),
-                    "PlayResX" => script.info.play_res_x = value.parse().unwrap(),
-                    "PlayResY" => script.info.play_res_y = value.parse().unwrap(),
-                    "ScriptType" => script.info.script_type = value.parse().unwrap(),
-                    "YCbCr Matrix" => script.info.ycb_cr_matrix = value.parse().unwrap(),
-                    "Original Translation" => script.info.original_translation = value.parse().unwrap(),
-                    "Last Style Storage" => script.info.last_style_storage = value.parse().unwrap(),
-                    "Audio File" => script.info.audio_file = value.parse().unwrap(),
-                    "Video File" => script.info.video_file = value.parse().unwrap(),
-                    "Video AR Value" => script.info.video_ar_value = value.parse().unwrap(),
-                    "Video Zoom Percent" => script.info.video_zoom_percent = value.parse().unwrap(),
-                    "Active Line" => script.info.active_line = value.parse().unwrap(),
-                    "Video Position" => script.info.video_position = value.parse().unwrap(),
+                    "PlayResX" => script.info.play_res_x = parse_or_skip!(value),
+                    "PlayResY" => script.info.play_res_y = parse_or_skip!(value),
+                    "ScriptType" => script.info.script_type = parse_or_skip!(value),
+                    "YCbCr Matrix" => script.info.ycb_cr_matrix = parse_or_skip!(value),
+                    "Original Translation" => script.info.original_translation = parse_or_skip!(value),
+                    "Last Style Storage" => script.info.last_style_storage = parse_or_skip!(value),
+                    "Audio File" => script.info.audio_file = parse_or_skip!(value),
+                    "Video File" => script.info.video_file = parse_or_skip!(value),
+                    "Video AR Value" => script.info.video_ar_value = parse_or_skip!(value),
+                    "Video Zoom Percent" => script.info.video_zoom_percent = parse_or_skip!(value),
+                    "Active Line" => script.info.active_line = parse_or_skip!(value),
+                    "Video Position" => script.info.video_position = parse_or_skip!(value),
                     _ => {
-                        println!("{} = {}", name, value);
+                        println!("{}: {}", name, value);
                     }
                 }
             } else if line.is_empty() || line.starts_with(";") {
