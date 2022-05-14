@@ -489,7 +489,6 @@ impl<'s> ScriptParser<'s> {
 
     fn parse_event(&mut self, data: &'s str) -> Event<'s> {
         let mapping = self.events_mapping.as_ref().unwrap();
-
         let fields = data.splitn(mapping.len(), ',').collect::<Vec<_>>();
         let event = Event {
             marked: mapping.get(&EventField::Marked).and_then(|idx| fields.get(*idx)) == Some(&"1"),
@@ -504,27 +503,6 @@ impl<'s> ScriptParser<'s> {
             effect: fields[mapping[&EventField::Effect]],
             text: fields[mapping[&EventField::Text]],
         };
-
-        match parse(event.text.as_bytes()) {
-            Ok(ref res) => {
-                let mut x = false;
-                for part in res {
-                    if let Part::Text(text) = part {
-                        let mut reader = Reader::new(text.as_bytes());
-                        if let Err(_e) = parse_curve(&mut reader) {
-                            // dbg!(line_number, text, e);
-                            x = true;
-                        }
-                    }
-                }
-
-                if x {
-                    // dbg!(&line.text);
-                }
-            }
-            Err(r) => todo!("{:?}", r),
-        }
-
         event
     }
 }
@@ -622,7 +600,7 @@ impl<'d> Reader<'d> {
 }
 
 #[derive(Debug)]
-enum ReaderError {
+pub enum ReaderError {
     InvalidFloat,
     InvalidInt,
     InvalidChar,
@@ -931,7 +909,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Code>, ReaderError> {
 }
 
 #[derive(Debug)]
-enum Part {
+pub enum Part {
     Text(String),
     Overrides(Vec<Code>),
     NewLine { smart_wrapping: bool },
@@ -973,7 +951,7 @@ impl PartsBuilder {
     }
 }
 
-fn parse(s: &[u8]) -> Result<Vec<Part>, ReaderError> {
+pub fn parse(s: &[u8]) -> Result<Vec<Part>, ReaderError> {
     let mut builder = PartsBuilder::new();
     let mut reader = Reader::new(s);
     while let Some(x) = reader.peek() {
