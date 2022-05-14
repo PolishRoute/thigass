@@ -558,6 +558,10 @@ impl<'d> Reader<'d> {
         &self.buf[pos..self.pos]
     }
 
+    fn ignore_whitespace(&mut self) {
+        self.take_while(|b| b.is_ascii_whitespace());
+    }
+
     fn read_float(&mut self) -> Result<f32, ReaderError> {
         let x = self.take_while(|c| matches!(c, b'0'..=b'9' | b'.' | b'-'));
         let x = std::str::from_utf8(x).unwrap();
@@ -662,9 +666,9 @@ pub enum DrawCommand {
 
 fn read_point(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
     let x = reader.read_float()?;
-    reader.take_while(|c| c.is_ascii_whitespace());
+    reader.ignore_whitespace();
     let y = reader.read_float()?;
-    reader.take_while(|c| c.is_ascii_whitespace());
+    reader.ignore_whitespace();
     Ok((x, y))
 }
 
@@ -685,19 +689,19 @@ fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
         match c {
             b'm' => {
                 reader.expect(b'm')?;
-                reader.take_while(|c| c.is_ascii_whitespace());
+                reader.ignore_whitespace();
                 let (x, y) = read_point(reader)?;
                 cmds.push(DrawCommand::CloseAndMove(x, y));
             }
             b'n' => {
                 reader.expect(b'n')?;
-                reader.take_while(|c| c.is_ascii_whitespace());
+                reader.ignore_whitespace();
                 let (x, y) = read_point(reader)?;
                 cmds.push(DrawCommand::Move(x, y));
             }
             b'l' => {
                 reader.expect(b'l')?;
-                reader.take_while(|c| c.is_ascii_whitespace());
+                reader.ignore_whitespace();
 
                 while reader.peek().map_or(false, |c| c.is_ascii_digit()) {
                     let (x, y) = read_point(reader)?;
@@ -706,11 +710,11 @@ fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
             }
             b'b' => {
                 reader.expect(b'b')?;
-                reader.take_while(|c| c.is_ascii_whitespace());
+                reader.ignore_whitespace();
                 let p1 = read_point(reader)?;
-                reader.take_while(|c| c.is_ascii_whitespace());
+                reader.ignore_whitespace();
                 let p2 = read_point(reader)?;
-                reader.take_while(|c| c.is_ascii_whitespace());
+                reader.ignore_whitespace();
                 let p3 = read_point(reader)?;
 
                 cmds.push(DrawCommand::Bezier([p1, p2, p3]));

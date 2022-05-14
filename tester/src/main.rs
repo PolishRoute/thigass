@@ -8,7 +8,7 @@ fn main() {
     let mut parser = ScriptParser::new(&utf8);
     let script = parser.parse();
 
-    for (etype, e) in script.events.into_iter().skip(1000).take(10) {
+    for (etype, e) in script.events.into_iter() {
         if let Ok(x) = parse(e.text.as_bytes()) {
             // dbg!(x);
         }
