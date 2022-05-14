@@ -24,27 +24,31 @@ impl fmt::Debug for Timestamp {
 }
 
 #[derive(Debug)]
-pub enum TimestampError {
-    Todo,
+pub enum TimestampParseError {
+    MissingHours,
+    MissingMinutes,
+    MissingSeconds,
+    MissingHundredths,
+    InvalidInt(ParseIntError),
 }
 
-impl From<ParseIntError> for TimestampError {
-    fn from(_: ParseIntError) -> Self {
-        todo!()
+impl From<ParseIntError> for TimestampParseError {
+    fn from(e: ParseIntError) -> Self {
+        TimestampParseError::InvalidInt(e)
     }
 }
 
 impl FromStr for Timestamp {
-    type Err = TimestampError;
+    type Err = TimestampParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.splitn(3, ':');
-        let hours: u64 = parts.next().ok_or_else(|| TimestampError::Todo)?.parse()?;
-        let minutes: u64 = parts.next().ok_or_else(|| TimestampError::Todo)?.parse()?;
+        let hours: u64 = parts.next().ok_or_else(|| TimestampParseError::MissingHours)?.parse()?;
+        let minutes: u64 = parts.next().ok_or_else(|| TimestampParseError::MissingMinutes)?.parse()?;
         let (seconds, hundredths) = parts.next()
-            .ok_or_else(|| TimestampError::Todo)?
+            .ok_or_else(|| TimestampParseError::MissingSeconds)?
             .split_once('.')
-            .ok_or_else(|| TimestampError::Todo)?;
+            .ok_or_else(|| TimestampParseError::MissingHundredths)?;
         let seconds: u64 = seconds.parse()?;
         let hundredths: u64 = hundredths.parse()?;
         Ok(Timestamp { value: hours * 360000u64 + minutes * 6000u64 + seconds * 100u64 + hundredths })
@@ -198,14 +202,21 @@ pub struct Color {
     pub a: u8,
 }
 
+#[derive(Debug)]
+pub enum ColorParseError {
+    InvalidInt(ParseIntError),
+    UnsupportedLength,
+}
+
 impl FromStr for Color {
-    type Err = ();
+    type Err = ColorParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.strip_prefix("&H").unwrap_or(s);
 
-        fn parse_hex(s: &str) -> Result<u8, ()> {
-            u8::from_str_radix(&s, 16).map_err(|_| ())
+        fn parse_hex(s: &str) -> Result<u8, ColorParseError> {
+            u8::from_str_radix(&s, 16)
+                .map_err(ColorParseError::InvalidInt)
         }
 
         Ok(match s.len() {
@@ -233,7 +244,7 @@ impl FromStr for Color {
                 r: 0,
                 a: 0,
             },
-            _ => todo!("{}", s),
+            _ => return Err(ColorParseError::UnsupportedLength),
         })
     }
 }
