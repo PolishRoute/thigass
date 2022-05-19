@@ -5,8 +5,7 @@ use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
 
-use fxhash::FxBuildHasher;
-use indexmap::IndexMap;
+use enum_map::{Enum, enum_map, EnumArray, EnumMap};
 
 pub struct Timestamp {
     value: u64,
@@ -80,7 +79,7 @@ pub struct Event<'s> {
     pub text: &'s str,
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Enum)]
 enum EventField {
     Marked,
     Layer,
@@ -95,8 +94,8 @@ enum EventField {
     Text,
 }
 
-fn parse_events_mapping(config: &str) -> Option<IndexMap<EventField, usize, FxBuildHasher>> {
-    let mut mapping = IndexMap::with_hasher(FxBuildHasher::default());
+fn parse_events_mapping(config: &str) -> Option<FieldMapping<EventField>> {
+    let mut mapping = FieldMapping::empty();
     for (idx, field) in config.split(", ").enumerate() {
         let key = match field {
             "Layer" => EventField::Layer,
@@ -112,7 +111,7 @@ fn parse_events_mapping(config: &str) -> Option<IndexMap<EventField, usize, FxBu
             "Text" => EventField::Text,
             _ => unimplemented!("{}", field),
         };
-        mapping.insert(key, idx);
+        mapping.set(key, idx);
     }
 
     Some(mapping)
@@ -167,7 +166,7 @@ impl FromStr for WrapStyle {
     }
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Enum)]
 enum StyleField {
     Name,
     FontName,
@@ -276,8 +275,8 @@ pub struct Style {
     pub encoding: (),
 }
 
-fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHasher>> {
-    let mut mapping = IndexMap::with_hasher(FxBuildHasher::default());
+fn parse_styles_mapping(s: &str) -> Option<FieldMapping<StyleField>> {
+    let mut mapping = FieldMapping::empty();
     for (idx, s) in s.split(", ").enumerate() {
         let key = match s.trim() {
             "Name" => StyleField::Name,
@@ -305,7 +304,7 @@ fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHa
             "Encoding" => StyleField::Encoding,
             _ => unimplemented!("{}", s),
         };
-        mapping.insert(key, idx);
+        mapping.set(key, idx);
     }
 
     Some(mapping)
@@ -314,9 +313,36 @@ fn parse_styles_mapping(s: &str) -> Option<IndexMap<StyleField, usize, FxBuildHa
 pub struct ScriptParser<'s> {
     script: &'s str,
     pos: usize,
-    events_mapping: Option<IndexMap<EventField, usize, FxBuildHasher>>,
-    styles_mapping: Option<IndexMap<StyleField, usize, FxBuildHasher>>,
+    events_mapping: Option<FieldMapping<EventField>>,
+    styles_mapping: Option<FieldMapping<StyleField>>,
     line_number: usize,
+}
+
+struct FieldMapping<T: EnumArray<usize>> {
+    inner: EnumMap<T, usize>,
+}
+
+impl<T: EnumArray<usize>> FieldMapping<T> {
+    fn empty() -> Self {
+        Self {
+            inner: enum_map! { _ => usize::MAX },
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn set(&mut self, field: T, idx: usize) {
+        self.inner[field] = idx;
+    }
+
+    fn value_of<'s>(&self, field: T, values: &[&'s str]) -> &'s str {
+        match self.inner[field] {
+            usize::MAX => "",
+            other => values[other],
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -466,32 +492,32 @@ impl<'s> ScriptParser<'s> {
         let mapping = self.styles_mapping.as_ref().unwrap();
         let fields = s.split(',').collect::<Vec<_>>();
         let style = Style {
-            name: fields[mapping[&StyleField::Name]].to_string(),
-            font_name: fields[mapping[&StyleField::FontName]].parse().unwrap(),
-            font_size: fields[mapping[&StyleField::FontSize]].parse().unwrap(),
-            primary_colour: fields[mapping[&StyleField::PrimaryColour]].parse().unwrap(),
-            secondary_colour: fields[mapping[&StyleField::SecondaryColour]].parse().unwrap(),
-            outline_colour: fields[mapping[&StyleField::OutlineColour]].parse().unwrap(),
-            back_colour: fields[mapping[&StyleField::BackColour]].parse().unwrap(),
-            bold: fields[mapping[&StyleField::Bold]] == "1",
-            italic: fields[mapping[&StyleField::Italic]] == "1",
-            underline: fields[mapping[&StyleField::Underline]] == "1",
-            strike_out: fields[mapping[&StyleField::StrikeOut]] == "1",
-            scale_x: fields[mapping[&StyleField::ScaleX]].parse().unwrap(),
-            scale_y: fields[mapping[&StyleField::ScaleY]].parse().unwrap(),
-            spacing: fields[mapping[&StyleField::Spacing]].parse().unwrap(),
-            angle: fields[mapping[&StyleField::Angle]].parse().unwrap(),
+            name: mapping.value_of(StyleField::Name, &fields).to_string(),
+            font_name: mapping.value_of(StyleField::FontName, &fields).parse().unwrap(),
+            font_size: mapping.value_of(StyleField::FontSize, &fields).parse().unwrap(),
+            primary_colour: mapping.value_of(StyleField::PrimaryColour, &fields).parse().unwrap(),
+            secondary_colour: mapping.value_of(StyleField::SecondaryColour, &fields).parse().unwrap(),
+            outline_colour: mapping.value_of(StyleField::OutlineColour, &fields).parse().unwrap(),
+            back_colour: mapping.value_of(StyleField::BackColour, &fields).parse().unwrap(),
+            bold: mapping.value_of(StyleField::Bold, &fields) == "1",
+            italic: mapping.value_of(StyleField::Italic, &fields) == "1",
+            underline: mapping.value_of(StyleField::Underline, &fields) == "1",
+            strike_out: mapping.value_of(StyleField::StrikeOut, &fields) == "1",
+            scale_x: mapping.value_of(StyleField::ScaleX, &fields).parse().unwrap(),
+            scale_y: mapping.value_of(StyleField::ScaleY, &fields).parse().unwrap(),
+            spacing: mapping.value_of(StyleField::Spacing, &fields).parse().unwrap(),
+            angle: mapping.value_of(StyleField::Angle, &fields).parse().unwrap(),
             border_style: {
-                println!("BorderStyle: {}", &fields[mapping[&StyleField::BorderStyle]]);
+                println!("BorderStyle: {}", &mapping.value_of(StyleField::BorderStyle, &fields));
             },
-            outline: fields[mapping[&StyleField::Outline]].parse().unwrap(),
-            shadow: fields[mapping[&StyleField::Shadow]].parse().unwrap(),
-            alignment: fields[mapping[&StyleField::Alignment]].parse().unwrap(),
-            margin_l: fields[mapping[&StyleField::MarginL]].parse().unwrap(),
-            margin_r: fields[mapping[&StyleField::MarginR]].parse().unwrap(),
-            margin_v: fields[mapping[&StyleField::MarginV]].parse().unwrap(),
+            outline: mapping.value_of(StyleField::Outline, &fields).parse().unwrap(),
+            shadow: mapping.value_of(StyleField::Shadow, &fields).parse().unwrap(),
+            alignment: mapping.value_of(StyleField::Alignment, &fields).parse().unwrap(),
+            margin_l: mapping.value_of(StyleField::MarginL, &fields).parse().unwrap(),
+            margin_r: mapping.value_of(StyleField::MarginR, &fields).parse().unwrap(),
+            margin_v: mapping.value_of(StyleField::MarginV, &fields).parse().unwrap(),
             encoding: {
-                println!("Encoding: {}", &fields[mapping[&StyleField::Encoding]]);
+                println!("Encoding: {}", &mapping.value_of(StyleField::Encoding, &fields));
             },
         };
 
@@ -502,17 +528,17 @@ impl<'s> ScriptParser<'s> {
         let mapping = self.events_mapping.as_ref().unwrap();
         let fields = data.splitn(mapping.len(), ',').collect::<Vec<_>>();
         let event = Event {
-            marked: mapping.get(&EventField::Marked).and_then(|idx| fields.get(*idx)) == Some(&"1"),
-            layer: fields[mapping[&EventField::Layer]].parse().unwrap(),
-            start: fields[mapping[&EventField::Start]].parse().unwrap(),
-            end: fields[mapping[&EventField::End]].parse().unwrap(),
-            style: fields[mapping[&EventField::Style]],
-            name: fields[mapping[&EventField::Name]],
-            margin_l: Some(fields[mapping[&EventField::MarginL]].parse().unwrap()),
-            margin_r: Some(fields[mapping[&EventField::MarginR]].parse().unwrap()),
-            margin_v: Some(fields[mapping[&EventField::MarginV]].parse().unwrap()),
-            effect: fields[mapping[&EventField::Effect]],
-            text: fields[mapping[&EventField::Text]],
+            marked: mapping.value_of(EventField::Marked, &fields) == "1",
+            layer: mapping.value_of(EventField::Layer, &fields).parse().unwrap(),
+            start: mapping.value_of(EventField::Start, &fields).parse().unwrap(),
+            end: mapping.value_of(EventField::End, &fields).parse().unwrap(),
+            style: mapping.value_of(EventField::Style, &fields),
+            name: mapping.value_of(EventField::Name, &fields),
+            margin_l: Some(mapping.value_of(EventField::MarginL, &fields).parse().unwrap()),
+            margin_r: Some(mapping.value_of(EventField::MarginR, &fields).parse().unwrap()),
+            margin_v: Some(mapping.value_of(EventField::MarginV, &fields).parse().unwrap()),
+            effect: mapping.value_of(EventField::Effect, &fields),
+            text: mapping.value_of(EventField::Text, &fields),
         };
         event
     }
@@ -871,23 +897,23 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
     } else if reader.try_consume(b"c") {
         Effect::Color {
             index: None,
-            color: parse_color(reader)?
+            color: parse_color(reader)?,
         }
     } else if reader.try_consume(b"alpha") {
         Effect::Alpha {
             index: None,
-            value: parse_alpha(reader)?
+            value: parse_alpha(reader)?,
         }
     } else if let Some(b'0'..=b'9') = reader.peek() {
         let n = reader.read_integer();
         match reader.consume() {
             Some(b'c') => Effect::Color {
                 index: Some(n),
-                color: parse_color(reader)?
+                color: parse_color(reader)?,
             },
             Some(b'a') => Effect::Alpha {
                 index: Some(n),
-                value: parse_alpha(reader)?
+                value: parse_alpha(reader)?,
             },
             oth => todo!("{:?}", oth),
         }
