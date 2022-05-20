@@ -265,14 +265,14 @@ pub struct Style {
     pub scale_y: f32,
     pub spacing: f32,
     pub angle: f32,
-    pub border_style: (),
+    pub border_style: u32,
     pub outline: f32,
     pub shadow: f32,
     pub alignment: Alignment,
     pub margin_l: f32,
     pub margin_r: f32,
     pub margin_v: f32,
-    pub encoding: (),
+    pub encoding: u32,
 }
 
 fn parse_styles_mapping(s: &str) -> Option<FieldMapping<StyleField>> {
@@ -342,6 +342,16 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
             usize::MAX => "",
             other => values[other],
         }
+    }
+
+    fn value<U: FromStr>(&self, field: T, values: &[&str]) -> U
+        where U::Err: fmt::Debug
+    {
+        self.value_of(field, values).parse().unwrap()
+    }
+
+    fn bool(&self, field: T, values: &[&str]) -> bool {
+        self.value_of(field, values) == "1"
     }
 }
 
@@ -488,37 +498,34 @@ impl<'s> ScriptParser<'s> {
         script
     }
 
-    fn parse_style(&mut self, s: &str) -> Style {
+    fn parse_style(&mut self, s: &'s str) -> Style {
         let mapping = self.styles_mapping.as_ref().unwrap();
-        let fields = s.split(',').collect::<Vec<_>>();
+        let fields: Vec<_> = s.split(',').collect();
+
         let style = Style {
-            name: mapping.value_of(StyleField::Name, &fields).to_string(),
-            font_name: mapping.value_of(StyleField::FontName, &fields).parse().unwrap(),
-            font_size: mapping.value_of(StyleField::FontSize, &fields).parse().unwrap(),
-            primary_colour: mapping.value_of(StyleField::PrimaryColour, &fields).parse().unwrap(),
-            secondary_colour: mapping.value_of(StyleField::SecondaryColour, &fields).parse().unwrap(),
-            outline_colour: mapping.value_of(StyleField::OutlineColour, &fields).parse().unwrap(),
-            back_colour: mapping.value_of(StyleField::BackColour, &fields).parse().unwrap(),
-            bold: mapping.value_of(StyleField::Bold, &fields) == "1",
-            italic: mapping.value_of(StyleField::Italic, &fields) == "1",
-            underline: mapping.value_of(StyleField::Underline, &fields) == "1",
-            strike_out: mapping.value_of(StyleField::StrikeOut, &fields) == "1",
-            scale_x: mapping.value_of(StyleField::ScaleX, &fields).parse().unwrap(),
-            scale_y: mapping.value_of(StyleField::ScaleY, &fields).parse().unwrap(),
-            spacing: mapping.value_of(StyleField::Spacing, &fields).parse().unwrap(),
-            angle: mapping.value_of(StyleField::Angle, &fields).parse().unwrap(),
-            border_style: {
-                println!("BorderStyle: {}", &mapping.value_of(StyleField::BorderStyle, &fields));
-            },
-            outline: mapping.value_of(StyleField::Outline, &fields).parse().unwrap(),
-            shadow: mapping.value_of(StyleField::Shadow, &fields).parse().unwrap(),
-            alignment: mapping.value_of(StyleField::Alignment, &fields).parse().unwrap(),
-            margin_l: mapping.value_of(StyleField::MarginL, &fields).parse().unwrap(),
-            margin_r: mapping.value_of(StyleField::MarginR, &fields).parse().unwrap(),
-            margin_v: mapping.value_of(StyleField::MarginV, &fields).parse().unwrap(),
-            encoding: {
-                println!("Encoding: {}", &mapping.value_of(StyleField::Encoding, &fields));
-            },
+            name: mapping.value(StyleField::Name, &fields),
+            font_name: mapping.value(StyleField::FontName, &fields),
+            font_size: mapping.value(StyleField::FontSize, &fields),
+            primary_colour: mapping.value(StyleField::PrimaryColour, &fields),
+            secondary_colour: mapping.value(StyleField::SecondaryColour, &fields),
+            outline_colour: mapping.value(StyleField::OutlineColour, &fields),
+            back_colour: mapping.value(StyleField::BackColour, &fields),
+            bold: mapping.bool(StyleField::Bold, &fields),
+            italic: mapping.bool(StyleField::Italic, &fields),
+            underline: mapping.bool(StyleField::Underline, &fields),
+            strike_out: mapping.bool(StyleField::StrikeOut, &fields),
+            scale_x: mapping.value(StyleField::ScaleX, &fields),
+            scale_y: mapping.value(StyleField::ScaleY, &fields),
+            spacing: mapping.value(StyleField::Spacing, &fields),
+            angle: mapping.value(StyleField::Angle, &fields),
+            border_style: mapping.value(StyleField::BorderStyle, &fields),
+            outline: mapping.value(StyleField::Outline, &fields),
+            shadow: mapping.value(StyleField::Shadow, &fields),
+            alignment: mapping.value(StyleField::Alignment, &fields),
+            margin_l: mapping.value(StyleField::MarginL, &fields),
+            margin_r: mapping.value(StyleField::MarginR, &fields),
+            margin_v: mapping.value(StyleField::MarginV, &fields),
+            encoding: mapping.value(StyleField::Encoding, &fields),
         };
 
         style
@@ -526,17 +533,17 @@ impl<'s> ScriptParser<'s> {
 
     fn parse_event(&mut self, data: &'s str) -> Event<'s> {
         let mapping = self.events_mapping.as_ref().unwrap();
-        let fields = data.splitn(mapping.len(), ',').collect::<Vec<_>>();
+        let fields: Vec<_> = data.splitn(mapping.len(), ',').collect();
         let event = Event {
-            marked: mapping.value_of(EventField::Marked, &fields) == "1",
-            layer: mapping.value_of(EventField::Layer, &fields).parse().unwrap(),
-            start: mapping.value_of(EventField::Start, &fields).parse().unwrap(),
-            end: mapping.value_of(EventField::End, &fields).parse().unwrap(),
+            marked: mapping.bool(EventField::Marked, &fields),
+            layer: mapping.value(EventField::Layer, &fields),
+            start: mapping.value(EventField::Start, &fields),
+            end: mapping.value(EventField::End, &fields),
             style: mapping.value_of(EventField::Style, &fields),
             name: mapping.value_of(EventField::Name, &fields),
-            margin_l: Some(mapping.value_of(EventField::MarginL, &fields).parse().unwrap()),
-            margin_r: Some(mapping.value_of(EventField::MarginR, &fields).parse().unwrap()),
-            margin_v: Some(mapping.value_of(EventField::MarginV, &fields).parse().unwrap()),
+            margin_l: Some(mapping.value(EventField::MarginL, &fields)),
+            margin_r: Some(mapping.value(EventField::MarginR, &fields)),
+            margin_v: Some(mapping.value(EventField::MarginV, &fields)),
             effect: mapping.value_of(EventField::Effect, &fields),
             text: mapping.value_of(EventField::Text, &fields),
         };
