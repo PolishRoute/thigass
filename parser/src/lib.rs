@@ -1,5 +1,5 @@
-#![feature(derive_default_enum)]
 #![feature(let_else)]
+#![feature(slice_as_chunks)]
 
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
@@ -203,7 +203,7 @@ pub struct Color {
 
 #[derive(Debug)]
 pub enum ColorParseError {
-    InvalidInt(ParseIntError),
+    InvalidDigit,
     UnsupportedLength,
 }
 
@@ -211,34 +211,49 @@ impl FromStr for Color {
     type Err = ColorParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s.strip_prefix("&H").unwrap_or(s);
-
-        fn parse_hex(s: &str) -> Result<u8, ColorParseError> {
-            u8::from_str_radix(&s, 16)
-                .map_err(ColorParseError::InvalidInt)
+        const fn parse_hex_digit(c: u8) -> Result<u8, ColorParseError> {
+            match c {
+               b'0'..=b'9' => Ok(c - b'0'),
+               b'A'..=b'F' => Ok(c - b'A' + 10),
+               b'a'..=b'f' => Ok(c - b'a' + 10),
+                _ => Err(ColorParseError::InvalidDigit),
+            }
         }
 
-        Ok(match s.len() {
-            8 => Color {
-                b: parse_hex(&s[0..2])?,
-                g: parse_hex(&s[2..4])?,
-                r: parse_hex(&s[4..6])?,
-                a: parse_hex(&s[6..8])?,
+        fn parse_hex(s: &[u8; 2]) -> Result<u8, ColorParseError> {
+            let a = parse_hex_digit(s[0])?;
+            let b = parse_hex_digit(s[1])?;
+            Ok(a * 16 + b)
+        }
+
+        let s = s.as_bytes();
+        let s = s.strip_prefix(b"&H").unwrap_or(s);
+        let (channels, rest) = s.as_chunks::<2>();
+        if rest.len() != 0 {
+            return Err(ColorParseError::UnsupportedLength);
+        }
+
+        Ok(match channels {
+            [b, g, r, a] => Color {
+                b: parse_hex(b)?,
+                g: parse_hex(g)?,
+                r: parse_hex(r)?,
+                a: parse_hex(a)?,
             },
-            6 => Color {
-                b: parse_hex(&s[0..2])?,
-                g: parse_hex(&s[2..4])?,
-                r: parse_hex(&s[4..6])?,
+            [b, g, r] => Color {
+                b: parse_hex(b)?,
+                g: parse_hex(g)?,
+                r: parse_hex(r)?,
                 a: 0,
             },
-            4 => Color {
-                b: parse_hex(&s[0..2])?,
-                g: parse_hex(&s[2..4])?,
+            [b, g] => Color {
+                b: parse_hex(b)?,
+                g: parse_hex(g)?,
                 r: 0,
                 a: 0,
             },
-            2 => Color {
-                b: parse_hex(&s[0..2])?,
+            [b] => Color {
+                b: parse_hex(b)?,
                 g: 0,
                 r: 0,
                 a: 0,
@@ -382,32 +397,12 @@ impl<'s> ScriptParser<'s> {
             return None;
         }
 
-        let mut chars = self.script[self.pos..].chars().peekable();
-
-        let mut line_len = 0;
-        let mut ending_len = 0;
-        loop {
-            match (chars.next(), chars.peek()) {
-                (Some('\r'), Some('\n')) => {
-                    // DOS
-                    chars.next(); // Skip LF
-                    ending_len = 2;
-                    break;
-                }
-                (Some('\n'), _) => {
-                    // Unix
-                    ending_len = 1;
-                    break;
-                }
-                (Some(ch), _) => {
-                    line_len += ch.len_utf8();
-                }
-                (None, _) => break,
-            }
-        }
-
-        let line = &self.script[self.pos..][..line_len];
-        self.pos += line_len + ending_len;
+        let (line, _) = self.script[self.pos..].split_once('\n')?;
+        let (line, ending_len) = match line.strip_suffix('\r') {
+            Some(line) => (line, 2),
+            None => (line, 1),
+        };
+        self.pos += line.len() + ending_len;
         self.line_number += 1;
         Some(line)
     }
@@ -612,10 +607,10 @@ impl<'d> Reader<'d> {
         Ok(x.parse()?)
     }
 
-    fn read_string(&mut self) -> String {
+    fn read_str(&mut self) -> Result<&str, ReaderError> {
         let x = self.take_while(|c| c != b'\\');
         let x = std::str::from_utf8(x).unwrap();
-        x.to_string()
+        Ok(x)
     }
 
     fn read_integer(&mut self) -> u32 {
@@ -800,7 +795,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
     } else if reader.try_consume(b"ybord") {
         Effect::YBorder(reader.read_float()?)
     } else if reader.try_consume(b"fn") {
-        Effect::FontName(reader.read_string())
+        Effect::FontName(reader.read_str()?.into())
     } else if reader.try_consume(b"fscx") {
         Effect::FontScaleX(reader.read_float()?)
     } else if reader.try_consume(b"fscy") {

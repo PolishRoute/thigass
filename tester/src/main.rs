@@ -1,5 +1,8 @@
 use parser::{parse, ScriptParser};
 
+#[global_allocator]
+static GLOBAL_MIMALLOC: mimalloc_rust::GlobalMiMalloc = mimalloc_rust::GlobalMiMalloc;
+
 fn main() {
     let file_path = std::env::args().nth(1).expect("input file");
     let s = std::time::Instant::now();
