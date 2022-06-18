@@ -1,11 +1,13 @@
 #![feature(let_else)]
 #![feature(slice_as_chunks)]
+#![deny(unsafe_code)]
 
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
 
 use enum_map::{Enum, enum_map, EnumArray, EnumMap};
+use tinyvec::ArrayVec;
 
 pub struct Timestamp {
     value: u64,
@@ -207,59 +209,62 @@ pub enum ColorParseError {
     UnsupportedLength,
 }
 
+const fn parse_hex_digit(c: u8) -> Result<u8, ColorParseError> {
+    match c {
+        b'0'..=b'9' => Ok(c - b'0'),
+        b'A'..=b'F' => Ok(c - b'A' + 10),
+        b'a'..=b'f' => Ok(c - b'a' + 10),
+        _ => Err(ColorParseError::InvalidDigit),
+    }
+}
+
+fn parse_hex(s: &[u8; 2]) -> Result<u8, ColorParseError> {
+    let a = parse_hex_digit(s[0])?;
+    let b = parse_hex_digit(s[1])?;
+    Ok(a * 16 + b)
+}
+
+fn parse_hex_color(bytes: &[u8]) -> Result<Color, ColorParseError> {
+    let bytes = bytes.strip_prefix(b"&H").unwrap_or(bytes);
+    let (channels, rest) = bytes.as_chunks::<2>();
+    if rest.len() != 0 {
+        return Err(ColorParseError::UnsupportedLength);
+    }
+
+    Ok(match channels {
+        [b, g, r, a] => Color {
+            b: parse_hex(b)?,
+            g: parse_hex(g)?,
+            r: parse_hex(r)?,
+            a: parse_hex(a)?,
+        },
+        [b, g, r] => Color {
+            b: parse_hex(b)?,
+            g: parse_hex(g)?,
+            r: parse_hex(r)?,
+            a: 0,
+        },
+        [b, g] => Color {
+            b: parse_hex(b)?,
+            g: parse_hex(g)?,
+            r: 0,
+            a: 0,
+        },
+        [b] => Color {
+            b: parse_hex(b)?,
+            g: 0,
+            r: 0,
+            a: 0,
+        },
+        _ => return Err(ColorParseError::UnsupportedLength),
+    })
+}
+
 impl FromStr for Color {
     type Err = ColorParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        const fn parse_hex_digit(c: u8) -> Result<u8, ColorParseError> {
-            match c {
-               b'0'..=b'9' => Ok(c - b'0'),
-               b'A'..=b'F' => Ok(c - b'A' + 10),
-               b'a'..=b'f' => Ok(c - b'a' + 10),
-                _ => Err(ColorParseError::InvalidDigit),
-            }
-        }
-
-        fn parse_hex(s: &[u8; 2]) -> Result<u8, ColorParseError> {
-            let a = parse_hex_digit(s[0])?;
-            let b = parse_hex_digit(s[1])?;
-            Ok(a * 16 + b)
-        }
-
-        let s = s.as_bytes();
-        let s = s.strip_prefix(b"&H").unwrap_or(s);
-        let (channels, rest) = s.as_chunks::<2>();
-        if rest.len() != 0 {
-            return Err(ColorParseError::UnsupportedLength);
-        }
-
-        Ok(match channels {
-            [b, g, r, a] => Color {
-                b: parse_hex(b)?,
-                g: parse_hex(g)?,
-                r: parse_hex(r)?,
-                a: parse_hex(a)?,
-            },
-            [b, g, r] => Color {
-                b: parse_hex(b)?,
-                g: parse_hex(g)?,
-                r: parse_hex(r)?,
-                a: 0,
-            },
-            [b, g] => Color {
-                b: parse_hex(b)?,
-                g: parse_hex(g)?,
-                r: 0,
-                a: 0,
-            },
-            [b] => Color {
-                b: parse_hex(b)?,
-                g: 0,
-                r: 0,
-                a: 0,
-            },
-            _ => return Err(ColorParseError::UnsupportedLength),
-        })
+        parse_hex_color(s.as_bytes())
     }
 }
 
@@ -335,21 +340,24 @@ pub struct ScriptParser<'s> {
 
 struct FieldMapping<T: EnumArray<usize>> {
     inner: EnumMap<T, usize>,
+    inserted: usize,
 }
 
 impl<T: EnumArray<usize>> FieldMapping<T> {
     fn empty() -> Self {
         Self {
             inner: enum_map! { _ => usize::MAX },
+            inserted: 0,
         }
     }
 
     fn len(&self) -> usize {
-        self.inner.len()
+        self.inserted
     }
 
     fn set(&mut self, field: T, idx: usize) {
         self.inner[field] = idx;
+        self.inserted += 1;
     }
 
     fn value_of<'s>(&self, field: T, values: &[&'s str]) -> &'s str {
@@ -493,10 +501,10 @@ impl<'s> ScriptParser<'s> {
         script
     }
 
+    #[inline(never)]
     fn parse_style(&mut self, s: &'s str) -> Style {
         let mapping = self.styles_mapping.as_ref().unwrap();
-        let fields: Vec<_> = s.split(',').collect();
-
+        let fields: ArrayVec<[_; StyleField::LENGTH]> = s.splitn(mapping.len(), ',').collect();
         let style = Style {
             name: mapping.value(StyleField::Name, &fields),
             font_name: mapping.value(StyleField::FontName, &fields),
@@ -528,7 +536,7 @@ impl<'s> ScriptParser<'s> {
 
     fn parse_event(&mut self, data: &'s str) -> Event<'s> {
         let mapping = self.events_mapping.as_ref().unwrap();
-        let fields: Vec<_> = data.splitn(mapping.len(), ',').collect();
+        let fields: ArrayVec<[_; EventField::LENGTH]> = data.splitn(mapping.len(), ',').collect();
         let event = Event {
             marked: mapping.bool(EventField::Marked, &fields),
             layer: mapping.value(EventField::Layer, &fields),
@@ -597,18 +605,34 @@ impl<'d> Reader<'d> {
         &self.buf[pos..self.pos]
     }
 
+    fn take_until(&mut self, term1: u8) -> &'d [u8] {
+        let len = memchr::memchr(term1, &self.buf[self.pos..])
+            .unwrap_or_else(|| self.buf.len() - self.pos);
+        let slice = &self.buf[self.pos..][..len];
+        self.pos += len;
+        slice
+    }
+
+    fn take_until2(&mut self, term1: u8, term2: u8) -> &'d [u8] {
+        let len = memchr::memchr2(term1, term2, &self.buf[self.pos..])
+            .unwrap_or_else(|| self.buf.len() - self.pos);
+        let slice = &self.buf[self.pos..][..len];
+        self.pos += len;
+        slice
+    }
+
     fn ignore_whitespace(&mut self) {
         self.take_while(|b| b.is_ascii_whitespace());
     }
 
     fn read_float(&mut self) -> Result<f32, ReaderError> {
-        let x = self.take_while(|c| matches!(c, b'0'..=b'9' | b'.' | b'-'));
-        let x = std::str::from_utf8(x).unwrap();
-        Ok(x.parse()?)
+        let (value, len) = fast_float::parse_partial(&self.buf[self.pos..]).unwrap();
+        self.pos += len;
+        Ok(value)
     }
 
     fn read_str(&mut self) -> Result<&str, ReaderError> {
-        let x = self.take_while(|c| c != b'\\');
+        let x = self.take_until(b'\\');
         let x = std::str::from_utf8(x).unwrap();
         Ok(x)
     }
@@ -712,10 +736,10 @@ fn read_point(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
     Ok((x, y))
 }
 
-fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<Vec<&'a str>, ReaderError> {
+fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a str; 8]>, ReaderError> {
     reader.expect(b'(')?;
-    let args: Vec<&'a str> = reader
-        .take_while(|b| b != b')')
+    let args = reader
+        .take_until(b')')
         .split(|b| *b == b',')
         .map(|it| std::str::from_utf8(it).unwrap())
         .collect();
@@ -935,7 +959,7 @@ fn parse_color(reader: &mut Reader) -> Result<Color, ReaderError> {
     reader.expect(b'H')?;
     let hex = reader.take_while(|c| c.is_ascii_hexdigit());
     reader.expect(b'&')?;
-    Ok(std::str::from_utf8(hex).unwrap().parse().unwrap())
+    Ok(parse_hex_color(hex).unwrap())
 }
 
 fn parse_alpha(reader: &mut Reader) -> Result<u8, ReaderError> {
@@ -943,7 +967,7 @@ fn parse_alpha(reader: &mut Reader) -> Result<u8, ReaderError> {
     reader.expect(b'H')?;
     let hex = reader.take_while(|c| c.is_ascii_hexdigit());
     reader.expect(b'&')?;
-    Ok(u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap())
+    Ok(parse_hex(hex.try_into().unwrap()).unwrap())
 }
 
 fn read_style(s: &[u8]) -> Result<Vec<Effect>, ReaderError> {
@@ -962,7 +986,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ReaderError> {
                 break;
             }
             _ => {
-                let _comment = reader.take_while(|c| !matches!(c, b'\\' | b'}'));
+                let _comment = reader.take_until2(b'\\', b'}');
             }
         }
     }
@@ -971,77 +995,42 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ReaderError> {
 }
 
 #[derive(Debug)]
-pub enum Part {
-    Text(String),
+pub enum Part<'s> {
+    Text(&'s str),
     Overrides(Vec<Effect>),
     NewLine { smart_wrapping: bool },
 }
 
-struct PartsBuilder {
-    parts: Vec<Part>,
-    buf: Vec<u8>,
-}
-
-impl PartsBuilder {
-    fn new() -> Self {
-        Self {
-            parts: Vec::new(),
-            buf: Vec::new(),
-        }
-    }
-
-    fn finalize_buf(&mut self) {
-        if !self.buf.is_empty() {
-            let text = String::from_utf8_lossy(&self.buf).into_owned();
-            self.parts.push(Part::Text(text));
-            self.buf.clear();
-        }
-    }
-
-    fn push_part(&mut self, part: Part) {
-        self.finalize_buf();
-        self.parts.push(part);
-    }
-
-    fn push_byte(&mut self, byte: u8) {
-        self.buf.push(byte);
-    }
-
-    fn into_parts(mut self) -> Vec<Part> {
-        self.finalize_buf();
-        self.parts
-    }
-}
-
 pub fn parse(s: &[u8]) -> Result<Vec<Part>, ReaderError> {
-    let mut builder = PartsBuilder::new();
     let mut reader = Reader::new(s);
-    while let Some(x) = reader.peek() {
-        match x {
+    let mut parts = Vec::new();
+    while let Some(c) = reader.peek() {
+        match c {
             b'{' => {
                 reader.expect(b'{')?;
                 let effects = parse_overrides(&mut reader)?;
                 reader.expect(b'}')?;
                 if !effects.is_empty() {
-                    builder.push_part(Part::Overrides(effects));
+                    parts.push(Part::Overrides(effects));
                 }
             }
             b'\\' => {
                 reader.expect(b'\\')?;
                 match reader.consume() {
-                    Some(b'n') => builder.push_part(Part::NewLine { smart_wrapping: false }),
-                    Some(b'N') => builder.push_part(Part::NewLine { smart_wrapping: true }),
-                    _ => {
-                        // Ignore
-                    }
+                    Some(b'n') => parts.push(Part::NewLine { smart_wrapping: false }),
+                    Some(b'N') => parts.push(Part::NewLine { smart_wrapping: true }),
+                    _ => { /* ignore */ }
                 }
             }
             _ => {
-                builder.push_byte(reader.consume().unwrap());
+                let s = reader.take_until2(b'{', b'\\');
+                if s.len() > 0 {
+                    parts.push(Part::Text(std::str::from_utf8(s).unwrap().into()));
+                }
             }
         }
     }
-    Ok(builder.into_parts())
+    Ok(parts)
 }
 
 #[cfg(test)]

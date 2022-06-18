@@ -11,10 +11,9 @@ fn main() {
     let mut parser = ScriptParser::new(&utf8);
     let script = parser.parse();
 
-    for (etype, e) in script.events.into_iter() {
-        if let Ok(x) = parse(e.text.as_bytes()) {
-            // dbg!(x);
-        }
+    for (_etype, event) in script.events.into_iter() {
+        let x = parse(event.text.as_bytes()).unwrap();
+        // println!("{:?}", x);
     }
 
     println!("File parsed in {:?}", s.elapsed());

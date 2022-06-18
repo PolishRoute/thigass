@@ -5,3 +5,6 @@ edition = "2021"
 
 [dependencies]
 enum-map = "2.1.0"
+tinyvec = { version = "1.6.0", features = [] }
+fast-float = "0.2.0"
+memchr = "2.5.0"
