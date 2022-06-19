@@ -1,3 +1,4 @@
+use bstr::ByteSlice;
 use parser::{parse, ScriptParser};
 
 #[global_allocator]
@@ -7,12 +8,11 @@ fn main() {
     let file_path = std::env::args().nth(1).expect("input file");
     let s = std::time::Instant::now();
     let script = std::fs::read(file_path).unwrap();
-    let utf8 = std::str::from_utf8(&script).unwrap();
-    let mut parser = ScriptParser::new(&utf8);
+    let mut parser = ScriptParser::new(script.as_bstr());
     let script = parser.parse();
 
     for (_etype, event) in script.events.into_iter() {
-        let x = parse(event.text.as_bytes()).unwrap();
+        let _x = parse(event.text).unwrap();
         // println!("{:?}", x);
     }
 

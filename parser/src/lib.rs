@@ -1,10 +1,11 @@
 #![feature(let_else)]
 #![feature(slice_as_chunks)]
-#![deny(unsafe_code)]
+//#![deny(unsafe_code)]
 
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
+use bstr::{BStr, ByteSlice};
 
 use enum_map::{Enum, enum_map, EnumArray, EnumMap};
 use tinyvec::ArrayVec;
@@ -72,13 +73,13 @@ pub struct Event<'s> {
     pub layer: i32,
     pub start: Timestamp,
     pub end: Timestamp,
-    pub style: &'s str,
-    pub name: &'s str,
+    pub style: &'s BStr,
+    pub name: &'s BStr,
     pub margin_l: Option<u32>,
     pub margin_r: Option<u32>,
     pub margin_v: Option<u32>,
-    pub effect: &'s str,
-    pub text: &'s str,
+    pub effect: &'s BStr,
+    pub text: &'s BStr,
 }
 
 #[derive(Hash, Eq, PartialEq, Enum)]
@@ -96,22 +97,22 @@ enum EventField {
     Text,
 }
 
-fn parse_events_mapping(config: &str) -> Option<FieldMapping<EventField>> {
+fn parse_events_mapping(config: &BStr) -> Option<FieldMapping<EventField>> {
     let mut mapping = FieldMapping::empty();
-    for (idx, field) in config.split(", ").enumerate() {
+    for (idx, field) in config.split_str(b", ").enumerate() {
         let key = match field {
-            "Layer" => EventField::Layer,
-            "Marked" => EventField::Marked,
-            "Start" => EventField::Start,
-            "End" => EventField::End,
-            "Style" => EventField::Style,
-            "Name" => EventField::Name,
-            "MarginL" => EventField::MarginL,
-            "MarginR" => EventField::MarginR,
-            "MarginV" => EventField::MarginV,
-            "Effect" => EventField::Effect,
-            "Text" => EventField::Text,
-            _ => unimplemented!("{}", field),
+            b"Layer" => EventField::Layer,
+            b"Marked" => EventField::Marked,
+            b"Start" => EventField::Start,
+            b"End" => EventField::End,
+            b"Style" => EventField::Style,
+            b"Name" => EventField::Name,
+            b"MarginL" => EventField::MarginL,
+            b"MarginR" => EventField::MarginR,
+            b"MarginV" => EventField::MarginV,
+            b"Effect" => EventField::Effect,
+            b"Text" => EventField::Text,
+            _ => unimplemented!("{}", field.as_bstr()),
         };
         mapping.set(key, idx);
     }
@@ -224,6 +225,7 @@ fn parse_hex(s: &[u8; 2]) -> Result<u8, ColorParseError> {
     Ok(a * 16 + b)
 }
 
+#[inline(never)]
 fn parse_hex_color(bytes: &[u8]) -> Result<Color, ColorParseError> {
     let bytes = bytes.strip_prefix(b"&H").unwrap_or(bytes);
     let (channels, rest) = bytes.as_chunks::<2>();
@@ -295,34 +297,34 @@ pub struct Style {
     pub encoding: u32,
 }
 
-fn parse_styles_mapping(s: &str) -> Option<FieldMapping<StyleField>> {
+fn parse_styles_mapping(s: &BStr) -> Option<FieldMapping<StyleField>> {
     let mut mapping = FieldMapping::empty();
-    for (idx, s) in s.split(", ").enumerate() {
+    for (idx, s) in s.split(|b| *b == b',').map(|it| it.trim()).enumerate() {
         let key = match s.trim() {
-            "Name" => StyleField::Name,
-            "Fontname" => StyleField::FontName,
-            "Fontsize" => StyleField::FontSize,
-            "PrimaryColour" => StyleField::PrimaryColour,
-            "SecondaryColour" => StyleField::SecondaryColour,
-            "OutlineColour" => StyleField::OutlineColour,
-            "BackColour" => StyleField::BackColour,
-            "Bold" => StyleField::Bold,
-            "Italic" => StyleField::Italic,
-            "Underline" => StyleField::Underline,
-            "StrikeOut" => StyleField::StrikeOut,
-            "ScaleX" => StyleField::ScaleX,
-            "ScaleY" => StyleField::ScaleY,
-            "Spacing" => StyleField::Spacing,
-            "Angle" => StyleField::Angle,
-            "BorderStyle" => StyleField::BorderStyle,
-            "Outline" => StyleField::Outline,
-            "Shadow" => StyleField::Shadow,
-            "Alignment" => StyleField::Alignment,
-            "MarginL" => StyleField::MarginL,
-            "MarginR" => StyleField::MarginR,
-            "MarginV" => StyleField::MarginV,
-            "Encoding" => StyleField::Encoding,
-            _ => unimplemented!("{}", s),
+            b"Name" => StyleField::Name,
+            b"Fontname" => StyleField::FontName,
+            b"Fontsize" => StyleField::FontSize,
+            b"PrimaryColour" => StyleField::PrimaryColour,
+            b"SecondaryColour" => StyleField::SecondaryColour,
+            b"OutlineColour" => StyleField::OutlineColour,
+            b"BackColour" => StyleField::BackColour,
+            b"Bold" => StyleField::Bold,
+            b"Italic" => StyleField::Italic,
+            b"Underline" => StyleField::Underline,
+            b"StrikeOut" => StyleField::StrikeOut,
+            b"ScaleX" => StyleField::ScaleX,
+            b"ScaleY" => StyleField::ScaleY,
+            b"Spacing" => StyleField::Spacing,
+            b"Angle" => StyleField::Angle,
+            b"BorderStyle" => StyleField::BorderStyle,
+            b"Outline" => StyleField::Outline,
+            b"Shadow" => StyleField::Shadow,
+            b"Alignment" => StyleField::Alignment,
+            b"MarginL" => StyleField::MarginL,
+            b"MarginR" => StyleField::MarginR,
+            b"MarginV" => StyleField::MarginV,
+            b"Encoding" => StyleField::Encoding,
+            _ => unimplemented!("{}", s.as_bstr()),
         };
         mapping.set(key, idx);
     }
@@ -331,7 +333,7 @@ fn parse_styles_mapping(s: &str) -> Option<FieldMapping<StyleField>> {
 }
 
 pub struct ScriptParser<'s> {
-    script: &'s str,
+    script: &'s BStr,
     pos: usize,
     events_mapping: Option<FieldMapping<EventField>>,
     styles_mapping: Option<FieldMapping<StyleField>>,
@@ -360,21 +362,21 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
         self.inserted += 1;
     }
 
-    fn value_of<'s>(&self, field: T, values: &[&'s str]) -> &'s str {
+    fn value_of<'s>(&self, field: T, values: &[&'s [u8]]) -> &'s [u8] {
         match self.inner[field] {
-            usize::MAX => "",
+            usize::MAX => b"",
             other => values[other],
         }
     }
 
-    fn value<U: FromStr>(&self, field: T, values: &[&str]) -> U
+    fn value<U: FromStr>(&self, field: T, values: &[&[u8]]) -> U
         where U::Err: fmt::Debug
     {
-        self.value_of(field, values).parse().unwrap()
+        unsafe { self.value_of(field, values).as_bstr().to_str_unchecked().parse().unwrap() }
     }
 
-    fn bool(&self, field: T, values: &[&str]) -> bool {
-        self.value_of(field, values) == "1"
+    fn bool(&self, field: T, values: &[&[u8]]) -> bool {
+        self.value_of(field, values) == b"1"
     }
 }
 
@@ -386,10 +388,13 @@ pub struct Script<'s> {
 }
 
 impl<'s> ScriptParser<'s> {
-    pub fn new(script: &'s str) -> Self {
+    pub fn new(script: &'s BStr) -> Self {
         // TODO: BOM mark -- handle exotic encodings
-        let script = script.strip_prefix('\u{feff}')
-            .unwrap_or(script);
+        let mut it = script.chars();
+        let script = match it.next() {
+            Some('\u{FEFF}') => it.as_bytes().as_bstr(),
+            _ => script,
+        };
 
         ScriptParser {
             script,
@@ -401,14 +406,18 @@ impl<'s> ScriptParser<'s> {
     }
 
     #[inline(never)]
-    fn next_line(&mut self) -> Option<&'s str> {
+    fn next_line(&mut self) -> Option<&'s BStr> {
         if self.pos >= self.script.len() {
             return None;
         }
 
-        let (line, _) = self.script[self.pos..].split_once('\n')?;
-        let (line, ending_len) = match line.strip_suffix('\r') {
-            Some(line) => (line, 2),
+        let pos = memchr::memchr(b'\n', &self.script[self.pos..]);
+        let line = match pos {
+            Some(p) => &self.script[self.pos..][..p],
+            None => &self.script[self.pos..],
+        };
+        let (line, ending_len) = match line.strip_suffix(b"\r") {
+            Some(line) => (line.as_bstr(), 2),
             None => (line, 1),
         };
         self.pos += line.len() + ending_len;
@@ -426,15 +435,15 @@ impl<'s> ScriptParser<'s> {
         let mut current_section = None;
 
         while let Some(line) = self.next_line() {
-            if let Some(section) = line.strip_prefix("[") {
+            if let Some(section) = line.strip_prefix(b"[") {
                 // Found a section eg. `[Events]`
-                current_section = match section.strip_suffix(']').unwrap() {
-                    "Events" => Some(Section::Events),
-                    "Script Info" => Some(Section::ScriptInfo),
-                    "V4+ Styles" => Some(Section::V4Styles),
+                current_section = match section.strip_suffix(b"]").unwrap() {
+                    b"Events" => Some(Section::Events),
+                    b"Script Info" => Some(Section::ScriptInfo),
+                    b"V4+ Styles" => Some(Section::V4Styles),
                     _ => None,
                 };
-            } else if let Some(format) = line.strip_prefix("Format: ") {
+            } else if let Some(format) = line.strip_prefix(b"Format: ") {
                 // Found list of columns provided in lines below.
 
                 let Some(section) = current_section.as_ref() else {
@@ -443,18 +452,18 @@ impl<'s> ScriptParser<'s> {
                 };
 
                 match section {
-                    Section::Events => self.events_mapping = parse_events_mapping(format),
-                    Section::V4Styles => self.styles_mapping = parse_styles_mapping(format),
+                    Section::Events => self.events_mapping = parse_events_mapping(format.as_bstr()),
+                    Section::V4Styles => self.styles_mapping = parse_styles_mapping(format.as_bstr()),
                     _ => todo!(),
                 }
-            } else if let Some(x) = line.strip_prefix("Dialogue: ") {
-                script.events.push((EventType::Dialogue, self.parse_event(x)));
-            } else if let Some(x) = line.strip_prefix("Comment: ") {
-                script.events.push((EventType::Comment, self.parse_event(x)));
-            } else if let Some(s) = line.strip_prefix("Style: ") {
-                let style = self.parse_style(s);
+            } else if let Some(x) = line.strip_prefix(b"Dialogue: ") {
+                script.events.push((EventType::Dialogue, self.parse_event(x.as_bstr())));
+            } else if let Some(x) = line.strip_prefix(b"Comment: ") {
+                script.events.push((EventType::Comment, self.parse_event(x.as_bstr())));
+            } else if let Some(s) = line.strip_prefix(b"Style: ") {
+                let style = self.parse_style(s.as_bstr());
                 script.styles.push(style);
-            } else if let Some((name, value)) = line.split_once(": ") {
+            } else if let Some((name, value)) = line.to_str().unwrap().split_once(": ") {
                 macro_rules! parse_or_skip {
                     ($s:expr) => {
                         match $s.parse() {
@@ -492,7 +501,7 @@ impl<'s> ScriptParser<'s> {
                         println!("{}: {}", name, value);
                     }
                 }
-            } else if line.trim().is_empty() || line.starts_with(";") {
+            } else if line.trim().is_empty() || line.starts_with(b";") {
                 continue;
             } else {
                 println!(">> {:?}", line);
@@ -503,9 +512,9 @@ impl<'s> ScriptParser<'s> {
     }
 
     #[inline(never)]
-    fn parse_style(&mut self, s: &'s str) -> Style {
+    fn parse_style(&mut self, s: &'s BStr) -> Style {
         let mapping = self.styles_mapping.as_ref().unwrap();
-        let fields: ArrayVec<[_; StyleField::LENGTH]> = s.splitn(mapping.len(), ',').collect();
+        let fields: ArrayVec<[_; StyleField::LENGTH]> = s.splitn(mapping.len(), |b| *b == b',').collect();
         let style = Style {
             name: mapping.value(StyleField::Name, &fields),
             font_name: mapping.value(StyleField::FontName, &fields),
@@ -536,21 +545,21 @@ impl<'s> ScriptParser<'s> {
     }
 
     #[inline(never)]
-    fn parse_event(&mut self, data: &'s str) -> Event<'s> {
+    fn parse_event(&mut self, data: &'s BStr) -> Event<'s> {
         let mapping = self.events_mapping.as_ref().unwrap();
-        let fields: ArrayVec<[_; EventField::LENGTH]> = data.splitn(mapping.len(), ',').collect();
+        let fields: ArrayVec<[_; EventField::LENGTH]> = data.splitn(mapping.len(), |b| *b == b',').collect();
         let event = Event {
             marked: mapping.bool(EventField::Marked, &fields),
             layer: mapping.value(EventField::Layer, &fields),
             start: mapping.value(EventField::Start, &fields),
             end: mapping.value(EventField::End, &fields),
-            style: mapping.value_of(EventField::Style, &fields),
-            name: mapping.value_of(EventField::Name, &fields),
+            style: mapping.value_of(EventField::Style, &fields).as_bstr(),
+            name: mapping.value_of(EventField::Name, &fields).as_bstr(),
             margin_l: Some(mapping.value(EventField::MarginL, &fields)),
             margin_r: Some(mapping.value(EventField::MarginR, &fields)),
             margin_v: Some(mapping.value(EventField::MarginV, &fields)),
-            effect: mapping.value_of(EventField::Effect, &fields),
-            text: mapping.value_of(EventField::Text, &fields),
+            effect: mapping.value_of(EventField::Effect, &fields).as_bstr(),
+            text: mapping.value_of(EventField::Text, &fields).as_bstr(),
         };
         event
     }
@@ -738,12 +747,12 @@ fn read_point(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
     Ok((x, y))
 }
 
-fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a str; 8]>, ReaderError> {
+fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, ReaderError> {
     reader.expect(b'(')?;
     let args = reader
         .take_until(b')')
         .split(|b| *b == b',')
-        .map(|it| std::str::from_utf8(it).unwrap())
+        .map(|it| it.as_bstr())
         .collect();
     reader.expect(b')')?;
     Ok(args)
@@ -788,7 +797,7 @@ fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
             opcode => {
                 println!("Invalid opcode: {}", opcode as char);
                 break;
-            },
+            }
         }
     }
     Ok(cmds)
@@ -803,6 +812,12 @@ impl From<ParseIntError> for ReaderError {
 
 impl From<ParseFloatError> for ReaderError {
     fn from(_: ParseFloatError) -> Self {
+        ReaderError::InvalidFloat
+    }
+}
+
+impl From<fast_float::Error> for ReaderError {
+    fn from(_: fast_float::Error) -> Self {
         ReaderError::InvalidFloat
     }
 }
@@ -848,10 +863,10 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
                 Effect::Clip { mask: cmds }
             }
             [x1, y1, x2, y2] => Effect::ClipRect(
-                x1.parse()?,
-                y1.parse()?,
-                x2.parse()?,
-                y2.parse()?,
+                fast_float::parse(x1)?,
+                fast_float::parse(y1)?,
+                fast_float::parse(x2)?,
+                fast_float::parse(y2)?,
             ),
             _ => todo!("{:?}", args)
         }
@@ -859,8 +874,8 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
         let args = parse_args(reader)?;
         match args[..] {
             [x, y] => Effect::Pos(
-                x.parse()?,
-                y.parse()?,
+                fast_float::parse(x)?,
+                fast_float::parse(y)?,
             ),
             _ => todo!("{:?}", args)
         }
@@ -876,14 +891,14 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
         let args = parse_args(reader)?;
         match args[..] {
             [t1, t2, accel, style] => Effect::Transition {
-                t1: Some(t1.parse()?),
-                t2: Some(t2.parse()?),
-                accel: Some(accel.parse()?),
+                t1: Some(fast_float::parse(t1)?),
+                t2: Some(fast_float::parse(t2)?),
+                accel: Some(fast_float::parse(accel)?),
                 style: read_style(style.as_bytes())?,
             },
             [t1, t2, style] => Effect::Transition {
-                t1: Some(t1.parse()?),
-                t2: Some(t2.parse()?),
+                t1: Some(fast_float::parse(t1)?),
+                t2: Some(fast_float::parse(t2)?),
                 accel: None,
                 style: read_style(style.as_bytes())?,
             },
@@ -899,8 +914,8 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
         let args = parse_args(reader)?;
         match args[..] {
             [t1, t2] => Effect::Fade {
-                t1: t1.parse()?,
-                t2: t2.parse()?,
+                t1: fast_float::parse(t1)?,
+                t2: fast_float::parse(t2)?,
             },
             _ => todo!("{:?}", args),
         }
@@ -908,12 +923,12 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
         let args = parse_args(reader)?;
         match args[..] {
             [x1, y1, x2, y2, t1, t2] => Effect::Move {
-                x1: x1.parse()?,
-                y1: y1.parse()?,
-                x2: x2.parse()?,
-                y2: y2.parse()?,
-                t1: t1.parse()?,
-                t2: t2.parse()?,
+                x1: fast_float::parse(x1)?,
+                y1: fast_float::parse(y1)?,
+                x2: fast_float::parse(x2)?,
+                y2: fast_float::parse(y2)?,
+                t1: fast_float::parse(t1)?,
+                t2: fast_float::parse(t2)?,
             },
             _ => todo!("{:?}", args)
         }
