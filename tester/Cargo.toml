@@ -5,3 +5,7 @@ edition = "2021"
 
 [dependencies]
 parser = { path = "../parser" }
+mimalloc-rust= "0.2.0"
+
+[profile.release]
+debug = true

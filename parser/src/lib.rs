@@ -400,6 +400,7 @@ impl<'s> ScriptParser<'s> {
         }
     }
 
+    #[inline(never)]
     fn next_line(&mut self) -> Option<&'s str> {
         if self.pos >= self.script.len() {
             return None;
@@ -491,7 +492,7 @@ impl<'s> ScriptParser<'s> {
                         println!("{}: {}", name, value);
                     }
                 }
-            } else if line.is_empty() || line.starts_with(";") {
+            } else if line.trim().is_empty() || line.starts_with(";") {
                 continue;
             } else {
                 println!(">> {:?}", line);
@@ -534,6 +535,7 @@ impl<'s> ScriptParser<'s> {
         style
     }
 
+    #[inline(never)]
     fn parse_event(&mut self, data: &'s str) -> Event<'s> {
         let mapping = self.events_mapping.as_ref().unwrap();
         let fields: ArrayVec<[_; EventField::LENGTH]> = data.splitn(mapping.len(), ',').collect();
@@ -783,7 +785,10 @@ fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
 
                 cmds.push(DrawCommand::Bezier([p1, p2, p3]));
             }
-            _ => break,
+            opcode => {
+                println!("Invalid opcode: {}", opcode as char);
+                break;
+            },
         }
     }
     Ok(cmds)
@@ -986,7 +991,8 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ReaderError> {
                 break;
             }
             _ => {
-                let _comment = reader.take_until2(b'\\', b'}');
+                let comment = reader.take_until2(b'\\', b'}');
+                println!("Comment: {:?}", std::str::from_utf8(comment));
             }
         }
     }
