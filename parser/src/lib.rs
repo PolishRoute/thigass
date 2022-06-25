@@ -671,20 +671,32 @@ impl<'d> Reader<'d> {
         slice
     }
 
-    fn ignore_whitespace(&mut self) {
-        self.take_while(|b| b.is_ascii_whitespace());
+    fn expect_whitespace_or_end(&mut self) -> Result<(), ReaderError> {
+        if self.peek().is_none() {
+            return Ok(());
+        }
+        self.expect_whitespace()
+    }
+
+    fn expect_whitespace(&mut self) -> Result<(), ReaderError> {
+        let ignored = self.take_while(|b| b.is_ascii_whitespace()).len();
+        if ignored > 0 {
+            Ok(())
+        } else {
+            Err(ReaderError::ExpectedWhitespace)
+        }
     }
 
     fn read_float(&mut self) -> Result<f32, ReaderError> {
-        let (value, len) = fast_float::parse_partial(&self.buf[self.pos..]).unwrap();
+        let (value, len) = fast_float::parse_partial(&self.buf[self.pos..])?;
         self.pos += len;
         Ok(value)
     }
 
     fn read_str(&mut self) -> Result<&str, ReaderError> {
-        let x = self.take_until(b'\\');
-        let x = std::str::from_utf8(x).unwrap();
-        Ok(x)
+        let s = self.take_until(b'\\');
+        let s = std::str::from_utf8(s).map_err(|_| ReaderError::InvalidStr)?;
+        Ok(s)
     }
 
     fn read_integer(&mut self) -> u32 {
@@ -711,8 +723,9 @@ impl<'d> Reader<'d> {
         }
     }
 
+    #[track_caller]
     fn dbg(&self) {
-        println!("!!! {:?}", std::str::from_utf8(&self.buf[self.pos..]));
+        println!("!!! {} {:?}", std::panic::Location::caller(), std::str::from_utf8(&self.buf[self.pos..]));
     }
 }
 
@@ -723,6 +736,9 @@ pub enum ReaderError {
     InvalidInt,
     InvalidChar,
     InvalidBool,
+    InvalidStr,
+    InvalidCurveOpcode,
+    ExpectedWhitespace,
 }
 
 #[derive(Debug)]
@@ -780,9 +796,9 @@ pub enum DrawCommand {
 
 fn read_point(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
     let x = reader.read_float()?;
-    reader.ignore_whitespace();
+    reader.expect_whitespace_or_end()?;
     let y = reader.read_float()?;
-    reader.ignore_whitespace();
+    reader.expect_whitespace_or_end()?;
     Ok((x, y))
 }
 
@@ -797,49 +813,54 @@ fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, Re
     Ok(args)
 }
 
-fn parse_curve(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
-    let mut cmds = Vec::new();
+fn parse_draw_commands(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
+    let mut commands = Vec::new();
+    let mut last_opcode = None;
     while let Some(c) = reader.peek() {
-        match c {
+        let opcode = match c {
+            b'm' | b'n' | b'l' | b'b' => {
+                reader.expect(c)?;
+                reader.expect_whitespace()?;
+                c
+            },
+            _ => {
+                // if next opcode is the same as the last one it could be omitted
+                last_opcode.ok_or(ReaderError::InvalidCurveOpcode)?
+            },
+        };
+        last_opcode = Some(opcode);
+
+        match opcode {
             b'm' => {
-                reader.expect(b'm')?;
-                reader.ignore_whitespace();
                 let (x, y) = read_point(reader)?;
-                cmds.push(DrawCommand::CloseAndMove(x, y));
+                commands.push(DrawCommand::CloseAndMove(x, y));
             }
             b'n' => {
-                reader.expect(b'n')?;
-                reader.ignore_whitespace();
                 let (x, y) = read_point(reader)?;
-                cmds.push(DrawCommand::Move(x, y));
+                commands.push(DrawCommand::Move(x, y));
             }
             b'l' => {
-                reader.expect(b'l')?;
-                reader.ignore_whitespace();
-
-                while reader.peek().map_or(false, |c| c.is_ascii_digit()) {
+                while reader.peek().map_or(false, |c| c.is_ascii_digit() || c == b'-') {
                     let (x, y) = read_point(reader)?;
-                    cmds.push(DrawCommand::Line(x, y));
+                    commands.push(DrawCommand::Line(x, y));
                 }
             }
             b'b' => {
-                reader.expect(b'b')?;
-                reader.ignore_whitespace();
                 let p1 = read_point(reader)?;
-                reader.ignore_whitespace();
                 let p2 = read_point(reader)?;
-                reader.ignore_whitespace();
                 let p3 = read_point(reader)?;
 
-                cmds.push(DrawCommand::Bezier([p1, p2, p3]));
+                commands.push(DrawCommand::Bezier([p1, p2, p3]));
             }
-            opcode => {
-                println!("Invalid opcode: {}", opcode as char);
-                break;
-            }
+            _ => unreachable!(),
         }
     }
-    Ok(cmds)
+    Ok(commands)
+}
+
+pub fn parse_curve(s: &[u8]) -> Result<Vec<DrawCommand>, ReaderError> {
+    let mut reader = Reader::new(s);
+    parse_draw_commands(&mut reader)
 }
 
 impl From<ParseIntError> for ReaderError {
@@ -898,7 +919,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
         match args[..] {
             [curve] => {
                 let mut reader = Reader::new(curve.as_bytes());
-                let cmds = parse_curve(&mut reader)?;
+                let cmds = parse_draw_commands(&mut reader)?;
                 Effect::Clip { mask: cmds }
             }
             [x1, y1, x2, y2] => Effect::ClipRect(
@@ -1034,6 +1055,7 @@ fn read_style(s: &[u8]) -> Result<Vec<Effect>, ReaderError> {
     parse_overrides(&mut reader)
 }
 
+#[inline(never)]
 fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ReaderError> {
     let mut items = Vec::new();
     while let Some(x) = reader.peek() {
@@ -1059,6 +1081,16 @@ pub enum Part<'s> {
     Text(&'s str),
     Overrides(Vec<Effect>),
     NewLine { smart_wrapping: bool },
+}
+
+impl Part<'_> {
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Part::Text(s) => Some(s),
+            Part::NewLine {..} => Some("\n"),
+            _ => None,
+        }
+    }
 }
 
 pub fn parse(s: &[u8]) -> Result<Vec<Part>, ReaderError> {
