@@ -1,12 +1,14 @@
 #![feature(let_else)]
 #![feature(slice_as_chunks)]
-//#![deny(unsafe_code)]
+#![deny(unsafe_code)]
+#![feature(specialization)]
+#![allow(incomplete_features)]
 
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
-use bstr::{BStr, ByteSlice};
 
+use bstr::{BStr, ByteSlice};
 use enum_map::{Enum, enum_map, EnumArray, EnumMap};
 use tinyvec::ArrayVec;
 
@@ -369,14 +371,51 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
         }
     }
 
-    fn value<U: FromStr>(&self, field: T, values: &[&[u8]]) -> U
-        where U::Err: fmt::Debug
+    fn value<U: FromBytes>(&self, field: T, values: &[&[u8]]) -> U
     {
-        unsafe { self.value_of(field, values).as_bstr().to_str_unchecked().parse().unwrap() }
+        U::from_bytes(self.value_of(field, values)).map_err(drop).unwrap()
     }
 
     fn bool(&self, field: T, values: &[&[u8]]) -> bool {
         self.value_of(field, values) == b"1"
+    }
+}
+
+trait FromBytes: Sized {
+    type Err;
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err>;
+}
+
+impl<T: FromStr> FromBytes for T {
+    default type Err = <T as FromStr>::Err;
+
+    default fn from_bytes(bytes: &[u8]) -> Result<Self, <Self as FromBytes>::Err> {
+        Ok(T::from_str(bytes.to_str().unwrap()).map_err(drop).unwrap())
+    }
+}
+
+impl FromBytes for f32 {
+    type Err = fast_float::Error;
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err> {
+        fast_float::parse(bytes)
+    }
+}
+
+impl FromBytes for Color {
+    type Err = ColorParseError;
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err> {
+        parse_hex_color(bytes)
+    }
+}
+
+impl FromBytes for String {
+    type Err = ();
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err> {
+        Ok(bytes.to_str_lossy().into_owned())
     }
 }
 
