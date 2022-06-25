@@ -3,9 +3,10 @@
 #![deny(unsafe_code)]
 #![feature(specialization)]
 #![allow(incomplete_features)]
+#![feature(never_type)]
 
 use std::fmt;
-use std::num::{ParseFloatError, ParseIntError};
+use std::num::ParseIntError;
 use std::str::FromStr;
 
 use bstr::{BStr, ByteSlice};
@@ -371,8 +372,7 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
         }
     }
 
-    fn value<U: FromBytes>(&self, field: T, values: &[&[u8]]) -> U
-    {
+    fn value<U: FromBytes>(&self, field: T, values: &[&[u8]]) -> U {
         U::from_bytes(self.value_of(field, values)).map_err(drop).unwrap()
     }
 
@@ -683,35 +683,43 @@ impl<'d> Reader<'d> {
         if ignored > 0 {
             Ok(())
         } else {
-            Err(ReaderError::ExpectedWhitespace)
+            Err(ReaderError::ExpectedWhitespace { pos: self.pos })
         }
     }
 
     fn read_float(&mut self) -> Result<f32, ReaderError> {
-        let (value, len) = fast_float::parse_partial(&self.buf[self.pos..])?;
+        let (value, len) = fast_float::parse_partial(&self.buf[self.pos..])
+            .map_err(|_| ReaderError::InvalidFloat { pos: self.pos })?;
         self.pos += len;
         Ok(value)
     }
 
     fn read_str(&mut self) -> Result<&str, ReaderError> {
+        let pos = self.pos;
         let s = self.take_until(b'\\');
-        let s = std::str::from_utf8(s).map_err(|_| ReaderError::InvalidStr)?;
+        let s = std::str::from_utf8(s).map_err(|_| ReaderError::InvalidStr { pos })?;
         Ok(s)
     }
 
-    fn read_integer(&mut self) -> u32 {
+    fn read_integer(&mut self) -> Result<u32, ReaderError> {
+        let pos = self.pos;
+        let digits = self.take_while(|c| c.is_ascii_digit());
+        if digits.len() == 0 {
+            return Err(ReaderError::InvalidInt { pos });
+        }
+
         let mut n = 0;
-        for b in self.take_while(|c| c.is_ascii_digit()).iter().copied() {
+        for b in digits.iter().copied() {
             n = n * 10 + (b - b'0') as u32;
         }
-        n
+        Ok(n)
     }
 
     fn read_bool(&mut self) -> Result<bool, ReaderError> {
         match self.consume() {
             Some(b'0') => Ok(false),
             Some(b'1') => Ok(true),
-            _ => Err(ReaderError::InvalidBool),
+            _ => Err(ReaderError::InvalidBool { pos: self.pos - 1 }),
         }
     }
 
@@ -719,10 +727,11 @@ impl<'d> Reader<'d> {
         if self.try_consume(&[b]) {
             Ok(())
         } else {
-            Err(ReaderError::InvalidChar)
+            Err(ReaderError::InvalidChar { pos: self.pos, expected: b })
         }
     }
 
+    #[allow(unused)]
     #[track_caller]
     fn dbg(&self) {
         println!("!!! {} {:?}", std::panic::Location::caller(), std::str::from_utf8(&self.buf[self.pos..]));
@@ -731,14 +740,27 @@ impl<'d> Reader<'d> {
 
 #[derive(Debug)]
 pub enum ReaderError {
+    InvalidInt { pos: usize },
+    InvalidFloat { pos: usize },
+    InvalidChar { pos: usize, expected: u8 },
+    InvalidBool { pos: usize },
+    InvalidStr { pos: usize },
+    ExpectedWhitespace { pos: usize },
+}
+
+#[derive(Debug)]
+pub enum ParserError {
+    ReaderError(ReaderError),
     UnsupportedEffect(String),
-    InvalidFloat,
-    InvalidInt,
-    InvalidChar,
-    InvalidBool,
-    InvalidStr,
     InvalidCurveOpcode,
-    ExpectedWhitespace,
+    MissingEffectName,
+    UnsupportedOverload { args: usize },
+}
+
+impl From<ReaderError> for ParserError {
+    fn from(e: ReaderError) -> Self {
+        Self::ReaderError(e)
+    }
 }
 
 #[derive(Debug)]
@@ -813,7 +835,7 @@ fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, Re
     Ok(args)
 }
 
-fn parse_draw_commands(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderError> {
+fn parse_draw_commands(reader: &mut Reader) -> Result<Vec<DrawCommand>, ParserError> {
     let mut commands = Vec::new();
     let mut last_opcode = None;
     while let Some(c) = reader.peek() {
@@ -822,11 +844,11 @@ fn parse_draw_commands(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderEr
                 reader.expect(c)?;
                 reader.expect_whitespace()?;
                 c
-            },
+            }
             _ => {
                 // if next opcode is the same as the last one it could be omitted
-                last_opcode.ok_or(ReaderError::InvalidCurveOpcode)?
-            },
+                last_opcode.ok_or(ParserError::InvalidCurveOpcode)?
+            }
         };
         last_opcode = Some(opcode);
 
@@ -858,38 +880,28 @@ fn parse_draw_commands(reader: &mut Reader) -> Result<Vec<DrawCommand>, ReaderEr
     Ok(commands)
 }
 
-pub fn parse_curve(s: &[u8]) -> Result<Vec<DrawCommand>, ReaderError> {
+pub fn parse_curve(s: &[u8]) -> Result<Vec<DrawCommand>, ParserError> {
     let mut reader = Reader::new(s);
     parse_draw_commands(&mut reader)
 }
 
-impl From<ParseIntError> for ReaderError {
-    fn from(_: ParseIntError) -> Self {
-        ReaderError::InvalidInt
-    }
+fn parse_float(s: &[u8]) -> Result<f32, ReaderError> {
+    Reader::new(s).read_float()
 }
 
-
-impl From<ParseFloatError> for ReaderError {
-    fn from(_: ParseFloatError) -> Self {
-        ReaderError::InvalidFloat
-    }
+fn unsupported_overload(args: &[&BStr]) -> Result<!, ParserError> {
+    println!("Unsupported overload: {:?}", args);
+    Err(ParserError::UnsupportedOverload { args: args.len() })
 }
 
-impl From<fast_float::Error> for ReaderError {
-    fn from(_: fast_float::Error) -> Self {
-        ReaderError::InvalidFloat
-    }
-}
-
-fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
+fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     reader.expect(b'\\')?;
     Ok(if reader.try_consume(b"n") {
         Effect::NewLine { smart_wrapping: false }
     } else if reader.try_consume(b"N") {
         Effect::NewLine { smart_wrapping: true }
     } else if reader.try_consume(b"an") {
-        Effect::Align(Alignment(reader.read_integer() as u8))
+        Effect::Align(Alignment(reader.read_integer()?.try_into().unwrap()))
     } else if reader.try_consume(b"blur") {
         Effect::Blur(reader.read_float()?)
     } else if reader.try_consume(b"bord") {
@@ -923,21 +935,21 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
                 Effect::Clip { mask: cmds }
             }
             [x1, y1, x2, y2] => Effect::ClipRect(
-                fast_float::parse(x1)?,
-                fast_float::parse(y1)?,
-                fast_float::parse(x2)?,
-                fast_float::parse(y2)?,
+                parse_float(x1)?,
+                parse_float(y1)?,
+                parse_float(x2)?,
+                parse_float(y2)?,
             ),
-            _ => todo!("{:?}", args)
+            _ => unsupported_overload(&args)?,
         }
     } else if reader.try_consume(b"pos") {
         let args = parse_args(reader)?;
         match args[..] {
             [x, y] => Effect::Pos(
-                fast_float::parse(x)?,
-                fast_float::parse(y)?,
+                parse_float(x)?,
+                parse_float(y)?,
             ),
-            _ => todo!("{:?}", args)
+            _ => unsupported_overload(&args)?,
         }
     } else if reader.try_consume(b"i") {
         Effect::Italic(reader.read_bool()?)
@@ -951,53 +963,53 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
         let args = parse_args(reader)?;
         match args[..] {
             [t1, t2, accel, style] => Effect::Transition {
-                t1: Some(fast_float::parse(t1)?),
-                t2: Some(fast_float::parse(t2)?),
-                accel: Some(fast_float::parse(accel)?),
-                style: read_style(style.as_bytes())?,
+                t1: Some(parse_float(t1)?),
+                t2: Some(parse_float(t2)?),
+                accel: Some(parse_float(accel)?),
+                style: parse_style(style.as_bytes())?,
             },
             [t1, t2, style] => Effect::Transition {
-                t1: Some(fast_float::parse(t1)?),
-                t2: Some(fast_float::parse(t2)?),
+                t1: Some(parse_float(t1)?),
+                t2: Some(parse_float(t2)?),
                 accel: None,
-                style: read_style(style.as_bytes())?,
+                style: parse_style(style.as_bytes())?,
             },
             [style] => Effect::Transition {
                 t1: None,
                 t2: None,
                 accel: None,
-                style: read_style(style.as_bytes())?,
+                style: parse_style(style.as_bytes())?,
             },
-            _ => unimplemented!("t: {:?}", args),
+            _ => unsupported_overload(&args)?,
         }
     } else if reader.try_consume(b"fad") {
         let args = parse_args(reader)?;
         match args[..] {
             [t1, t2] => Effect::Fade {
-                t1: fast_float::parse(t1)?,
-                t2: fast_float::parse(t2)?,
+                t1: parse_float(t1)?,
+                t2: parse_float(t2)?,
             },
-            _ => todo!("{:?}", args),
+            _ => unsupported_overload(&args)?,
         }
     } else if reader.try_consume(b"move") {
         let args = parse_args(reader)?;
         match args[..] {
             [x1, y1, x2, y2, t1, t2] => Effect::Move {
-                x1: fast_float::parse(x1)?,
-                y1: fast_float::parse(y1)?,
-                x2: fast_float::parse(x2)?,
-                y2: fast_float::parse(y2)?,
-                t1: fast_float::parse(t1)?,
-                t2: fast_float::parse(t2)?,
+                x1: parse_float(x1)?,
+                y1: parse_float(y1)?,
+                x2: parse_float(x2)?,
+                y2: parse_float(y2)?,
+                t1: parse_float(t1)?,
+                t2: parse_float(t2)?,
             },
-            _ => todo!("{:?}", args)
+            _ => unsupported_overload(&args)?,
         }
     } else if reader.try_consume(b"xshad") {
         Effect::XShadow(reader.read_float()?)
     } else if reader.try_consume(b"yshad") {
         Effect::YShadow(reader.read_float()?)
     } else if reader.try_consume(b"q") {
-        Effect::WrappingStyle(reader.read_integer())
+        Effect::WrappingStyle(reader.read_integer()?)
     } else if reader.try_consume(b"r") {
         Effect::Reset
     } else if reader.try_consume(b"c") {
@@ -1011,7 +1023,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
             value: parse_alpha(reader)?,
         }
     } else if let Some(b'0'..=b'9') = reader.peek() {
-        let n = reader.read_integer();
+        let n = reader.read_integer()?;
         match reader.consume() {
             Some(b'c') => Effect::Color {
                 index: Some(n),
@@ -1025,12 +1037,11 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ReaderError> {
         }
     } else {
         let name = reader.take_while(|b| b.is_ascii_alphabetic());
-        if name.is_empty() {
-            reader.dbg();
-            return Err(ReaderError::InvalidChar);
+        return if name.is_empty() {
+            Err(ParserError::MissingEffectName)
         } else {
-            return Err(ReaderError::UnsupportedEffect(String::from_utf8_lossy(name).into_owned()));
-        }
+            Err(ParserError::UnsupportedEffect(String::from_utf8_lossy(name).into_owned()))
+        };
     })
 }
 
@@ -1050,13 +1061,13 @@ fn parse_alpha(reader: &mut Reader) -> Result<u8, ReaderError> {
     Ok(parse_hex(hex.try_into().unwrap()).unwrap())
 }
 
-fn read_style(s: &[u8]) -> Result<Vec<Effect>, ReaderError> {
+fn parse_style(s: &[u8]) -> Result<Vec<Effect>, ParserError> {
     let mut reader = Reader::new(s);
     parse_overrides(&mut reader)
 }
 
 #[inline(never)]
-fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ReaderError> {
+fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
     let mut items = Vec::new();
     while let Some(x) = reader.peek() {
         match x {
@@ -1087,13 +1098,13 @@ impl Part<'_> {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Part::Text(s) => Some(s),
-            Part::NewLine {..} => Some("\n"),
+            Part::NewLine { .. } => Some("\n"),
             _ => None,
         }
     }
 }
 
-pub fn parse(s: &[u8]) -> Result<Vec<Part>, ReaderError> {
+pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
     let mut reader = Reader::new(s);
     let mut parts = Vec::new();
     while let Some(c) = reader.peek() {

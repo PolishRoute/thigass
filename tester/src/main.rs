@@ -1,5 +1,5 @@
 use bstr::ByteSlice;
-use parser::{parse, parse_curve, Part, ReaderError, ScriptParser};
+use parser::{parse, parse_curve, ParserError, Part, ReaderError, ScriptParser};
 
 #[global_allocator]
 static GLOBAL_MIMALLOC: mimalloc_rust::GlobalMiMalloc = mimalloc_rust::GlobalMiMalloc;
@@ -18,7 +18,7 @@ fn main() {
                 Part::Text(t) => {
                     match parse_curve(t.as_bytes()) {
                         Ok(_) => {}
-                        Err(ReaderError::InvalidCurveOpcode | ReaderError::ExpectedWhitespace) => {
+                        Err(ParserError::InvalidCurveOpcode | ParserError::ReaderError(ReaderError::ExpectedWhitespace { .. })) => {
                             //println!("{:?}", t);
                         }
                         Err(e) => panic!("{}: {:?}", t, e),
