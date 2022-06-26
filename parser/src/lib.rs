@@ -862,7 +862,7 @@ pub enum DrawCommand {
 
 fn read_point(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
     let x = reader.read_float()?;
-    reader.expect_whitespace_or_end()?;
+    reader.expect_whitespace()?;
     let y = reader.read_float()?;
     reader.expect_whitespace_or_end()?;
     Ok((x, y))
