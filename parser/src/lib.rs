@@ -817,6 +817,7 @@ pub enum Effect {
     FontSize(f32),
     FontScaleX(f32),
     FontScaleY(f32),
+    FontSpacing(f32),
     RotateX(f32),
     RotateY(f32),
     RotateZ(f32),
@@ -938,161 +939,149 @@ fn unsupported_overload(name: impl AsRef<[u8]>, args: &[&BStr]) -> Result<!, Par
 
 fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     reader.expect(b'\\')?;
-    Ok(if reader.try_consume(b"n") {
-        Effect::NewLine { smart_wrapping: false }
-    } else if reader.try_consume(b"N") {
-        Effect::NewLine { smart_wrapping: true }
-    } else if reader.try_consume(b"an") {
-        Effect::Align(Alignment(reader.read_integer()?.try_into().unwrap()))
-    } else if reader.try_consume(b"blur") {
-        Effect::Blur(reader.read_float()?)
-    } else if reader.try_consume(b"bord") {
-        Effect::Border(reader.read_float()?)
-    } else if reader.try_consume(b"xbord") {
-        Effect::XBorder(reader.read_float()?)
-    } else if reader.try_consume(b"ybord") {
-        Effect::YBorder(reader.read_float()?)
-    } else if reader.try_consume(b"fn") {
-        Effect::FontName(reader.read_str()?.into())
-    } else if reader.try_consume(b"fscx") {
-        Effect::FontScaleX(reader.read_float()?)
-    } else if reader.try_consume(b"fscy") {
-        Effect::FontScaleY(reader.read_float()?)
-    } else if reader.try_consume(b"fs") {
-        Effect::FontSize(reader.read_float()?)
-    } else if reader.try_consume(b"frx") {
-        Effect::RotateX(reader.read_float()?)
-    } else if reader.try_consume(b"fry") {
-        Effect::RotateY(reader.read_float()?)
-    } else if reader.try_consume(b"frz") {
-        Effect::RotateZ(reader.read_float()?)
-    } else if reader.try_consume(b"fax") {
-        Effect::ShearingX(reader.read_float()?)
-    } else if reader.try_consume(b"clip") {
-        let args = parse_args(reader)?;
-        match args[..] {
-            [curve] => {
-                let mut reader = Reader::new(curve.as_bytes());
-                let cmds = parse_draw_commands(&mut reader)?;
-                Effect::Clip { mask: cmds }
+    let name = reader.take_while(|c| c.is_ascii_alphabetic() && c.is_ascii_lowercase());
+    // TODO: improve handling of effects with string parameters like \fnFontName
+    let effect = match name {
+        b"n" => Effect::NewLine { smart_wrapping: false },
+        b"N" => Effect::NewLine { smart_wrapping: true },
+        b"an" => Effect::Align(Alignment(reader.read_integer()?.try_into().unwrap())),
+        b"blur" => Effect::Blur(reader.read_float()?),
+        b"bord" => Effect::Border(reader.read_float()?),
+        b"xbord" => Effect::XBorder(reader.read_float()?),
+        b"ybord" => Effect::YBorder(reader.read_float()?),
+        b"fn" => Effect::FontName(reader.read_str()?.into()),
+        b"fscx" => Effect::FontScaleX(reader.read_float()?),
+        b"fscy" => Effect::FontScaleY(reader.read_float()?),
+        b"fsp" => Effect::FontSpacing(reader.read_float()?),
+        b"fs" => Effect::FontSize(reader.read_float()?),
+        b"frx" => Effect::RotateX(reader.read_float()?),
+        b"fry" => Effect::RotateY(reader.read_float()?),
+        b"frz" => Effect::RotateZ(reader.read_float()?),
+        b"fax" => Effect::ShearingX(reader.read_float()?),
+        b"clip" => {
+            let args = parse_args(reader)?;
+            match args[..] {
+                [curve] => {
+                    let mut reader = Reader::new(curve.as_bytes());
+                    let cmds = parse_draw_commands(&mut reader)?;
+                    Effect::Clip { mask: cmds }
+                }
+                [x1, y1, x2, y2] => Effect::ClipRect(
+                    parse_float(x1)?,
+                    parse_float(y1)?,
+                    parse_float(x2)?,
+                    parse_float(y2)?,
+                ),
+                _ => unsupported_overload("clip", &args)?,
             }
-            [x1, y1, x2, y2] => Effect::ClipRect(
-                parse_float(x1)?,
-                parse_float(y1)?,
-                parse_float(x2)?,
-                parse_float(y2)?,
-            ),
-            _ => unsupported_overload("clip", &args)?,
         }
-    } else if reader.try_consume(b"pos") {
-        let args = parse_args(reader)?;
-        match args[..] {
-            [x, y] => Effect::Pos(
-                parse_float(x)?,
-                parse_float(y)?,
-            ),
-            _ => unsupported_overload("pos", &args)?,
+        b"pos" => {
+            let args = parse_args(reader)?;
+            match args[..] {
+                [x, y] => Effect::Pos(
+                    parse_float(x)?,
+                    parse_float(y)?,
+                ),
+                _ => unsupported_overload("pos", &args)?,
+            }
         }
-    } else if reader.try_consume(b"i") {
-        Effect::Italic(reader.read_bool()?)
-    } else if reader.try_consume(b"p") {
-        Effect::DrawScale(reader.read_float()?)
-    } else if reader.try_consume(b"b") {
-        Effect::Bold(reader.read_bool()?)
-    } else if reader.try_consume(b"shad") {
-        Effect::Shadow(reader.read_float()?)
-    } else if reader.try_consume(b"t") {
-        let args = parse_args(reader)?;
-        match args[..] {
-            [t1, t2, accel, style] => Effect::Transition {
-                t1: Some(parse_float(t1)?),
-                t2: Some(parse_float(t2)?),
-                accel: Some(parse_float(accel)?),
-                style: parse_style(style.as_bytes())?,
-            },
-            [t1, t2, style] => Effect::Transition {
-                t1: Some(parse_float(t1)?),
-                t2: Some(parse_float(t2)?),
-                accel: None,
-                style: parse_style(style.as_bytes())?,
-            },
-            [style] => Effect::Transition {
-                t1: None,
-                t2: None,
-                accel: None,
-                style: parse_style(style.as_bytes())?,
-            },
-            _ => unsupported_overload("t", &args)?,
+        b"i" => Effect::Italic(reader.read_bool()?),
+        b"p" => Effect::DrawScale(reader.read_float()?),
+        b"b" => Effect::Bold(reader.read_bool()?),
+        b"shad" => Effect::Shadow(reader.read_float()?),
+        b"t" => {
+            let args = parse_args(reader)?;
+            match args[..] {
+                [t1, t2, accel, style] => Effect::Transition {
+                    t1: Some(parse_float(t1)?),
+                    t2: Some(parse_float(t2)?),
+                    accel: Some(parse_float(accel)?),
+                    style: parse_style(style.as_bytes())?,
+                },
+                [t1, t2, style] => Effect::Transition {
+                    t1: Some(parse_float(t1)?),
+                    t2: Some(parse_float(t2)?),
+                    accel: None,
+                    style: parse_style(style.as_bytes())?,
+                },
+                [style] => Effect::Transition {
+                    t1: None,
+                    t2: None,
+                    accel: None,
+                    style: parse_style(style.as_bytes())?,
+                },
+                _ => unsupported_overload("t", &args)?,
+            }
         }
-    } else if reader.try_consume(b"fad") {
-        let args = parse_args(reader)?;
-        match args[..] {
-            [t1, t2] => Effect::Fade {
-                t1: parse_float(t1)?,
-                t2: parse_float(t2)?,
-            },
-            _ => unsupported_overload("fad", &args)?,
+        b"fad" => {
+            let args = parse_args(reader)?;
+            match args[..] {
+                [t1, t2] => Effect::Fade {
+                    t1: parse_float(t1)?,
+                    t2: parse_float(t2)?,
+                },
+                _ => unsupported_overload("fad", &args)?,
+            }
         }
-    } else if reader.try_consume(b"move") {
-        let args = parse_args(reader)?;
-        match args[..] {
-            [x1, y1, x2, y2, t1, t2] => Effect::Move {
-                x1: parse_float(x1)?,
-                y1: parse_float(y1)?,
-                x2: parse_float(x2)?,
-                y2: parse_float(y2)?,
-                t1: Some(parse_float(t1)?),
-                t2: Some(parse_float(t2)?),
-            },
-            [x1, y1, x2, y2] => Effect::Move {
-                x1: parse_float(x1)?,
-                y1: parse_float(y1)?,
-                x2: parse_float(x2)?,
-                y2: parse_float(y2)?,
-                t1: None,
-                t2: None,
-            },
-            _ => unsupported_overload("move", &args)?,
+        b"move" => {
+            let args = parse_args(reader)?;
+            match args[..] {
+                [x1, y1, x2, y2, t1, t2] => Effect::Move {
+                    x1: parse_float(x1)?,
+                    y1: parse_float(y1)?,
+                    x2: parse_float(x2)?,
+                    y2: parse_float(y2)?,
+                    t1: Some(parse_float(t1)?),
+                    t2: Some(parse_float(t2)?),
+                },
+                [x1, y1, x2, y2] => Effect::Move {
+                    x1: parse_float(x1)?,
+                    y1: parse_float(y1)?,
+                    x2: parse_float(x2)?,
+                    y2: parse_float(y2)?,
+                    t1: None,
+                    t2: None,
+                },
+                _ => unsupported_overload("move", &args)?,
+            }
         }
-    } else if reader.try_consume(b"xshad") {
-        Effect::XShadow(reader.read_float()?)
-    } else if reader.try_consume(b"yshad") {
-        Effect::YShadow(reader.read_float()?)
-    } else if reader.try_consume(b"q") {
-        Effect::WrappingStyle(reader.read_integer()?)
-    } else if reader.try_consume(b"r") {
-        Effect::Reset
-    } else if reader.try_consume(b"c") {
-        Effect::Color {
+        b"xshad" => Effect::XShadow(reader.read_float()?),
+        b"yshad" => Effect::YShadow(reader.read_float()?),
+        b"q" => Effect::WrappingStyle(reader.read_integer()?),
+        b"r" => Effect::Reset,
+        b"c" => Effect::Color {
             index: None,
             color: parse_color(reader)?,
-        }
-    } else if reader.try_consume(b"alpha") {
-        Effect::Alpha {
+        },
+        b"alpha" => Effect::Alpha {
             index: None,
             value: parse_alpha(reader)?,
+        },
+        name if !name.is_empty() => return Err(ParserError::UnsupportedEffect(name.to_str_lossy().into_owned())),
+        _ => {
+            if let Some(b'0'..=b'9') = reader.peek() {
+                let n = reader.read_integer()?;
+                match reader.consume() {
+                    Some(b'c') => Effect::Color {
+                        index: Some(n),
+                        color: parse_color(reader)?,
+                    },
+                    Some(b'a') => Effect::Alpha {
+                        index: Some(n),
+                        value: parse_alpha(reader)?,
+                    },
+                    oth => {
+                        reader.dbg();
+                        panic!();
+                    }
+                }
+            } else {
+                return Err(ParserError::MissingEffectName);
+            }
         }
-    } else if let Some(b'0'..=b'9') = reader.peek() {
-        let n = reader.read_integer()?;
-        match reader.consume() {
-            Some(b'c') => Effect::Color {
-                index: Some(n),
-                color: parse_color(reader)?,
-            },
-            Some(b'a') => Effect::Alpha {
-                index: Some(n),
-                value: parse_alpha(reader)?,
-            },
-            oth => todo!("{:?}", oth),
-        }
-    } else {
-        let name = reader.take_while(|b| b.is_ascii_alphabetic());
-        return if name.is_empty() {
-            Err(ParserError::MissingEffectName)
-        } else {
-            Err(ParserError::UnsupportedEffect(String::from_utf8_lossy(name).into_owned()))
-        };
-    })
+    };
+
+    Ok(effect)
 }
 
 fn parse_color(reader: &mut Reader) -> Result<Color, ReaderError> {
