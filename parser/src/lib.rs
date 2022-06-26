@@ -123,7 +123,7 @@ fn parse_events_mapping(config: &BStr) -> FieldMapping<EventField> {
             b"Effect" => EventField::Effect,
             b"Text" => EventField::Text,
             _ => {
-                println!("{}", field.as_bstr());
+                tracing::warn!("Unsupported field for events: {}", field.as_bstr());
                 continue;
             }
         };
@@ -156,6 +156,8 @@ pub struct ScriptInfo {
     pub video_zoom_percent: f32,
     pub active_line: u32,
     pub video_position: u32,
+    pub video_aspect_ratio: f32,
+    pub video_zoom: f32,
 }
 
 #[derive(Debug, Default)]
@@ -336,8 +338,8 @@ fn parse_styles_mapping(s: &BStr) -> FieldMapping<StyleField> {
             b"MarginR" => StyleField::MarginR,
             b"MarginV" => StyleField::MarginV,
             b"Encoding" => StyleField::Encoding,
-            _ => {
-                println!("{}", s.as_bstr());
+            other => {
+                tracing::warn!("Unsupported field for styles: {}", other.as_bstr());
                 continue;
             }
         };
@@ -398,7 +400,7 @@ trait FromBytes: Sized {
     fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err>;
 }
 
-impl<T: FromStr> FromBytes for T where <T as FromStr>::Err: fmt::Debug{
+impl<T: FromStr> FromBytes for T where <T as FromStr>::Err: fmt::Debug {
     default type Err = <T as FromStr>::Err;
 
     default fn from_bytes(bytes: &[u8]) -> Result<Self, <Self as FromBytes>::Err> {
@@ -492,10 +494,14 @@ impl<'s> ScriptParser<'s> {
                     Some(b"Events") => Some(Section::Events),
                     Some(b"Script Info") => Some(Section::ScriptInfo),
                     Some(b"V4+ Styles") => Some(Section::V4Styles),
-                    _ => {
-                        println!("Unknown section: {}", section.as_bstr());
+                    Some(other) => {
+                        tracing::info!("Ignored section: {}", other.as_bstr());
                         None
-                    },
+                    }
+                    None => {
+                        tracing::warn!("Empty section");
+                        None
+                    }
                 };
             } else if let Some(format) = line.strip_prefix(b"Format: ") {
                 // Found list of columns provided in lines below.
@@ -511,7 +517,7 @@ impl<'s> ScriptParser<'s> {
                     Section::ScriptInfo => {
                         // Ignore when in a not supported section
                         continue;
-                    },
+                    }
                 }
             } else if let Some(x) = line.strip_prefix(b"Dialogue: ") {
                 script.events.push((EventType::Dialogue, self.parse_event(x.as_bstr())));
@@ -520,13 +526,15 @@ impl<'s> ScriptParser<'s> {
             } else if let Some(s) = line.strip_prefix(b"Style: ") {
                 let style = self.parse_style(s.as_bstr());
                 script.styles.push(style);
+            } else if line.trim().is_empty() || line.starts_with(b";") {
+                continue;
             } else if let Some(pos) = memchr::memchr(b':', line) {
                 macro_rules! parse_or_skip {
                     ($s:expr) => {
                         match FromBytes::from_bytes($s) {
                             Ok(value) => value,
                             Err(err) => {
-                                println!("Invalid value {:?}", err);
+                                tracing::warn!("Error while parsing value '{}': {:?}", $s.as_bstr(), err);
                                 continue;
                             }
                         }
@@ -557,14 +565,14 @@ impl<'s> ScriptParser<'s> {
                     b"Video Zoom Percent" => script.info.video_zoom_percent = parse_or_skip!(value),
                     b"Active Line" => script.info.active_line = parse_or_skip!(value),
                     b"Video Position" => script.info.video_position = parse_or_skip!(value),
+                    b"Video Aspect Ratio" => script.info.video_aspect_ratio = parse_or_skip!(value),
+                    b"Video Zoom" => script.info.video_zoom = parse_or_skip!(value),
                     _ => {
-                        println!("{}: {}", name, value.as_bstr());
+                        tracing::warn!("Invalid key for script info: '{}' with value '{}'", name, value.as_bstr())
                     }
                 }
-            } else if line.trim().is_empty() || line.starts_with(b";") {
-                continue;
             } else {
-                println!(">> {:?}", line);
+                tracing::trace!("Unsupported line: {}", line.as_bstr());
             }
         }
 
@@ -753,7 +761,7 @@ impl<'d> Reader<'d> {
     #[allow(unused)]
     #[track_caller]
     fn dbg(&self) {
-        println!("!!! {} {:?}", std::panic::Location::caller(), std::str::from_utf8(&self.buf[self.pos..]));
+        tracing::debug!("{} @ {:?}", std::panic::Location::caller(), &self.buf[self.pos..].as_bstr());
     }
 }
 
@@ -775,6 +783,14 @@ pub enum ParserError {
     MissingEffectName,
     UnsupportedOverload { args: usize },
 }
+
+impl fmt::Display for ParserError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Self as fmt::Debug>::fmt(self, f)
+    }
+}
+
+impl std::error::Error for ParserError {}
 
 impl From<ReaderError> for ParserError {
     fn from(e: ReaderError) -> Self {
@@ -812,7 +828,7 @@ pub enum Effect {
     Reset,
     Transition { t1: Option<f32>, t2: Option<f32>, accel: Option<f32>, style: Vec<Effect> },
     Fade { t1: f32, t2: f32 },
-    Move { x1: f32, y1: f32, x2: f32, y2: f32, t1: f32, t2: f32 },
+    Move { x1: f32, y1: f32, x2: f32, y2: f32, t1: Option<f32>, t2: Option<f32> },
     NewLine { smart_wrapping: bool },
 }
 
@@ -909,8 +925,8 @@ fn parse_float(s: &[u8]) -> Result<f32, ReaderError> {
     Reader::new(s).read_float()
 }
 
-fn unsupported_overload(args: &[&BStr]) -> Result<!, ParserError> {
-    println!("Unsupported overload: {:?}", args);
+fn unsupported_overload(name: impl AsRef<[u8]>, args: &[&BStr]) -> Result<!, ParserError> {
+    tracing::warn!("Unsupported overload for '{}': {:?}", name.as_ref().as_bstr(), args);
     Err(ParserError::UnsupportedOverload { args: args.len() })
 }
 
@@ -960,7 +976,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 parse_float(x2)?,
                 parse_float(y2)?,
             ),
-            _ => unsupported_overload(&args)?,
+            _ => unsupported_overload("clip", &args)?,
         }
     } else if reader.try_consume(b"pos") {
         let args = parse_args(reader)?;
@@ -969,7 +985,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 parse_float(x)?,
                 parse_float(y)?,
             ),
-            _ => unsupported_overload(&args)?,
+            _ => unsupported_overload("pos", &args)?,
         }
     } else if reader.try_consume(b"i") {
         Effect::Italic(reader.read_bool()?)
@@ -1000,7 +1016,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 accel: None,
                 style: parse_style(style.as_bytes())?,
             },
-            _ => unsupported_overload(&args)?,
+            _ => unsupported_overload("t", &args)?,
         }
     } else if reader.try_consume(b"fad") {
         let args = parse_args(reader)?;
@@ -1009,7 +1025,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 t1: parse_float(t1)?,
                 t2: parse_float(t2)?,
             },
-            _ => unsupported_overload(&args)?,
+            _ => unsupported_overload("fad", &args)?,
         }
     } else if reader.try_consume(b"move") {
         let args = parse_args(reader)?;
@@ -1019,10 +1035,18 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 y1: parse_float(y1)?,
                 x2: parse_float(x2)?,
                 y2: parse_float(y2)?,
-                t1: parse_float(t1)?,
-                t2: parse_float(t2)?,
+                t1: Some(parse_float(t1)?),
+                t2: Some(parse_float(t2)?),
             },
-            _ => unsupported_overload(&args)?,
+            [x1, y1, x2, y2] => Effect::Move {
+                x1: parse_float(x1)?,
+                y1: parse_float(y1)?,
+                x2: parse_float(x2)?,
+                y2: parse_float(y2)?,
+                t1: None,
+                t2: None,
+            },
+            _ => unsupported_overload("move", &args)?,
         }
     } else if reader.try_consume(b"xshad") {
         Effect::XShadow(reader.read_float()?)
@@ -1099,7 +1123,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
             }
             _ => {
                 let comment = reader.take_until2(b'\\', b'}');
-                println!("Comment: {:?}", std::str::from_utf8(comment));
+                tracing::info!("Comment: {}", comment.as_bstr());
             }
         }
     }

@@ -9,3 +9,4 @@ tinyvec = { version = "1.6.0", features = [] }
 fast-float = "0.2.0"
 memchr = "2.5.0"
 bstr = "0.2.17"
+tracing = "0.1.35"
