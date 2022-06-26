@@ -164,6 +164,7 @@ pub struct ScriptInfo {
     pub video_position: u32,
     pub video_aspect_ratio: f32,
     pub video_zoom: f32,
+    pub scroll_position: f32,
 }
 
 #[derive(Debug, Default)]
@@ -573,6 +574,7 @@ impl<'s> ScriptParser<'s> {
                     b"Video Position" => script.info.video_position = parse_or_skip!(value),
                     b"Video Aspect Ratio" => script.info.video_aspect_ratio = parse_or_skip!(value),
                     b"Video Zoom" => script.info.video_zoom = parse_or_skip!(value),
+                    b"Scroll Position" => script.info.scroll_position = parse_or_skip!(value),
                     _ => {
                         tracing::warn!("Invalid key for script info: '{}' with value '{}'", name, value.as_bstr())
                     }
