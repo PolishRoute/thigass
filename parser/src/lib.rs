@@ -1,9 +1,16 @@
 #![feature(let_else)]
-#![feature(slice_as_chunks)]
-#![deny(unsafe_code)]
-#![feature(specialization)]
-#![allow(incomplete_features)]
 #![feature(never_type)]
+#![feature(slice_as_chunks)]
+#![feature(specialization)]
+#![deny(unsafe_code)]
+#![allow(incomplete_features)]
+#![allow(clippy::unnecessary_lazy_evaluations)]
+#![allow(clippy::len_zero)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::trivially_copy_pass_by_ref)]
+#![allow(clippy::redundant_closure_for_method_calls)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::too_many_lines)]
 
 use std::fmt;
 use std::num::ParseIntError;
@@ -20,8 +27,8 @@ pub struct Timestamp {
 impl fmt::Debug for Timestamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{:02}:{:02}.{:02}",
-               self.value / 360000,
-               (self.value / 6000) % 60,
+               self.value / 360_000,
+               (self.value / 6_000) % 60,
                (self.value / 100) % 60,
                self.value % 100,
         )
@@ -56,7 +63,7 @@ impl FromStr for Timestamp {
             .ok_or_else(|| TimestampParseError::MissingHundredths)?;
         let seconds: u64 = seconds.parse()?;
         let hundredths: u64 = hundredths.parse()?;
-        Ok(Timestamp { value: hours * 360000u64 + minutes * 6000u64 + seconds * 100u64 + hundredths })
+        Ok(Timestamp { value: hours * 360_000u64 + minutes * 6_000u64 + seconds * 100u64 + hundredths })
     }
 }
 
@@ -100,7 +107,7 @@ enum EventField {
     Text,
 }
 
-fn parse_events_mapping(config: &BStr) -> Option<FieldMapping<EventField>> {
+fn parse_events_mapping(config: &BStr) -> FieldMapping<EventField> {
     let mut mapping = FieldMapping::empty();
     for (idx, field) in config.split_str(b", ").enumerate() {
         let key = match field {
@@ -115,12 +122,14 @@ fn parse_events_mapping(config: &BStr) -> Option<FieldMapping<EventField>> {
             b"MarginV" => EventField::MarginV,
             b"Effect" => EventField::Effect,
             b"Text" => EventField::Text,
-            _ => unimplemented!("{}", field.as_bstr()),
+            _ => {
+                println!("{}", field.as_bstr());
+                continue;
+            }
         };
         mapping.set(key, idx);
     }
-
-    Some(mapping)
+    mapping
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -300,7 +309,7 @@ pub struct Style {
     pub encoding: u32,
 }
 
-fn parse_styles_mapping(s: &BStr) -> Option<FieldMapping<StyleField>> {
+fn parse_styles_mapping(s: &BStr) -> FieldMapping<StyleField> {
     let mut mapping = FieldMapping::empty();
     for (idx, s) in s.split(|b| *b == b',').map(|it| it.trim()).enumerate() {
         let key = match s.trim() {
@@ -327,12 +336,14 @@ fn parse_styles_mapping(s: &BStr) -> Option<FieldMapping<StyleField>> {
             b"MarginR" => StyleField::MarginR,
             b"MarginV" => StyleField::MarginV,
             b"Encoding" => StyleField::Encoding,
-            _ => unimplemented!("{}", s.as_bstr()),
+            _ => {
+                println!("{}", s.as_bstr());
+                continue;
+            }
         };
         mapping.set(key, idx);
     }
-
-    Some(mapping)
+    mapping
 }
 
 pub struct ScriptParser<'s> {
@@ -382,12 +393,12 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
 }
 
 trait FromBytes: Sized {
-    type Err;
+    type Err: fmt::Debug;
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err>;
 }
 
-impl<T: FromStr> FromBytes for T {
+impl<T: FromStr> FromBytes for T where <T as FromStr>::Err: fmt::Debug{
     default type Err = <T as FromStr>::Err;
 
     default fn from_bytes(bytes: &[u8]) -> Result<Self, <Self as FromBytes>::Err> {
@@ -427,6 +438,7 @@ pub struct Script<'s> {
 }
 
 impl<'s> ScriptParser<'s> {
+    #[must_use]
     pub fn new(script: &'s BStr) -> Self {
         // TODO: BOM mark -- handle exotic encodings
         let mut it = script.chars();
@@ -476,11 +488,14 @@ impl<'s> ScriptParser<'s> {
         while let Some(line) = self.next_line() {
             if let Some(section) = line.strip_prefix(b"[") {
                 // Found a section eg. `[Events]`
-                current_section = match section.strip_suffix(b"]").unwrap() {
-                    b"Events" => Some(Section::Events),
-                    b"Script Info" => Some(Section::ScriptInfo),
-                    b"V4+ Styles" => Some(Section::V4Styles),
-                    _ => None,
+                current_section = match section.strip_suffix(b"]") {
+                    Some(b"Events") => Some(Section::Events),
+                    Some(b"Script Info") => Some(Section::ScriptInfo),
+                    Some(b"V4+ Styles") => Some(Section::V4Styles),
+                    _ => {
+                        println!("Unknown section: {}", section.as_bstr());
+                        None
+                    },
                 };
             } else if let Some(format) = line.strip_prefix(b"Format: ") {
                 // Found list of columns provided in lines below.
@@ -491,9 +506,12 @@ impl<'s> ScriptParser<'s> {
                 };
 
                 match section {
-                    Section::Events => self.events_mapping = parse_events_mapping(format.as_bstr()),
-                    Section::V4Styles => self.styles_mapping = parse_styles_mapping(format.as_bstr()),
-                    _ => todo!(),
+                    Section::Events => self.events_mapping = Some(parse_events_mapping(format.as_bstr())),
+                    Section::V4Styles => self.styles_mapping = Some(parse_styles_mapping(format.as_bstr())),
+                    Section::ScriptInfo => {
+                        // Ignore when in a not supported section
+                        continue;
+                    },
                 }
             } else if let Some(x) = line.strip_prefix(b"Dialogue: ") {
                 script.events.push((EventType::Dialogue, self.parse_event(x.as_bstr())));
@@ -502,10 +520,10 @@ impl<'s> ScriptParser<'s> {
             } else if let Some(s) = line.strip_prefix(b"Style: ") {
                 let style = self.parse_style(s.as_bstr());
                 script.styles.push(style);
-            } else if let Some((name, value)) = line.to_str().unwrap().split_once(": ") {
+            } else if let Some(pos) = memchr::memchr(b':', line) {
                 macro_rules! parse_or_skip {
                     ($s:expr) => {
-                        match $s.parse() {
+                        match FromBytes::from_bytes($s) {
                             Ok(value) => value,
                             Err(err) => {
                                 println!("Invalid value {:?}", err);
@@ -520,24 +538,27 @@ impl<'s> ScriptParser<'s> {
                     continue;
                 }
 
-                match name {
-                    "WrapStyle" => script.info.wrap_style = parse_or_skip!(value),
-                    "ScaledBorderAndShadow" => script.info.scaled_border_and_shadow = value == "yes",
-                    "Title" => script.info.title = value.to_string(),
-                    "PlayResX" => script.info.play_res_x = parse_or_skip!(value),
-                    "PlayResY" => script.info.play_res_y = parse_or_skip!(value),
-                    "ScriptType" => script.info.script_type = parse_or_skip!(value),
-                    "YCbCr Matrix" => script.info.ycb_cr_matrix = parse_or_skip!(value),
-                    "Original Translation" => script.info.original_translation = parse_or_skip!(value),
-                    "Last Style Storage" => script.info.last_style_storage = parse_or_skip!(value),
-                    "Audio File" => script.info.audio_file = parse_or_skip!(value),
-                    "Video File" => script.info.video_file = parse_or_skip!(value),
-                    "Video AR Value" => script.info.video_ar_value = parse_or_skip!(value),
-                    "Video Zoom Percent" => script.info.video_zoom_percent = parse_or_skip!(value),
-                    "Active Line" => script.info.active_line = parse_or_skip!(value),
-                    "Video Position" => script.info.video_position = parse_or_skip!(value),
+                let name = &line[..pos];
+                let value = line[pos + 1..].trim_start();
+
+                match name.as_bytes() {
+                    b"WrapStyle" => script.info.wrap_style = parse_or_skip!(value),
+                    b"ScaledBorderAndShadow" => script.info.scaled_border_and_shadow = value == b"yes",
+                    b"Title" => script.info.title = value.to_str_lossy().into_owned(),
+                    b"PlayResX" => script.info.play_res_x = parse_or_skip!(value),
+                    b"PlayResY" => script.info.play_res_y = parse_or_skip!(value),
+                    b"ScriptType" => script.info.script_type = parse_or_skip!(value),
+                    b"YCbCr Matrix" => script.info.ycb_cr_matrix = parse_or_skip!(value),
+                    b"Original Translation" => script.info.original_translation = parse_or_skip!(value),
+                    b"Last Style Storage" => script.info.last_style_storage = parse_or_skip!(value),
+                    b"Audio File" => script.info.audio_file = parse_or_skip!(value),
+                    b"Video File" => script.info.video_file = parse_or_skip!(value),
+                    b"Video AR Value" => script.info.video_ar_value = parse_or_skip!(value),
+                    b"Video Zoom Percent" => script.info.video_zoom_percent = parse_or_skip!(value),
+                    b"Active Line" => script.info.active_line = parse_or_skip!(value),
+                    b"Video Position" => script.info.video_position = parse_or_skip!(value),
                     _ => {
-                        println!("{}: {}", name, value);
+                        println!("{}: {}", name, value.as_bstr());
                     }
                 }
             } else if line.trim().is_empty() || line.starts_with(b";") {
@@ -554,7 +575,7 @@ impl<'s> ScriptParser<'s> {
     fn parse_style(&mut self, s: &'s BStr) -> Style {
         let mapping = self.styles_mapping.as_ref().unwrap();
         let fields: ArrayVec<[_; StyleField::LENGTH]> = s.splitn(mapping.len(), |b| *b == b',').collect();
-        let style = Style {
+        Style {
             name: mapping.value(StyleField::Name, &fields),
             font_name: mapping.value(StyleField::FontName, &fields),
             font_size: mapping.value(StyleField::FontSize, &fields),
@@ -578,9 +599,7 @@ impl<'s> ScriptParser<'s> {
             margin_r: mapping.value(StyleField::MarginR, &fields),
             margin_v: mapping.value(StyleField::MarginV, &fields),
             encoding: mapping.value(StyleField::Encoding, &fields),
-        };
-
-        style
+        }
     }
 
     #[inline(never)]
@@ -710,7 +729,7 @@ impl<'d> Reader<'d> {
 
         let mut n = 0;
         for b in digits.iter().copied() {
-            n = n * 10 + (b - b'0') as u32;
+            n = n * 10 + u32::from(b - b'0');
         }
         Ok(n)
     }
@@ -777,6 +796,7 @@ pub enum Effect {
     RotateX(f32),
     RotateY(f32),
     RotateZ(f32),
+    ShearingX(f32),
     Color { index: Option<u32>, color: Color },
     Alpha { index: Option<u32>, value: u8 },
     Pos(f32, f32),
@@ -925,7 +945,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     } else if reader.try_consume(b"frz") {
         Effect::RotateZ(reader.read_float()?)
     } else if reader.try_consume(b"fax") {
-        Effect::RotateZ(reader.read_float()?)
+        Effect::ShearingX(reader.read_float()?)
     } else if reader.try_consume(b"clip") {
         let args = parse_args(reader)?;
         match args[..] {
@@ -1089,17 +1109,18 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
 
 #[derive(Debug)]
 pub enum Part<'s> {
-    Text(&'s str),
+    Text(&'s BStr),
     Overrides(Vec<Effect>),
     NewLine { smart_wrapping: bool },
 }
 
 impl Part<'_> {
-    pub fn as_str(&self) -> Option<&str> {
+    #[must_use]
+    pub fn as_bstr(&self) -> Option<&BStr> {
         match self {
             Part::Text(s) => Some(s),
-            Part::NewLine { .. } => Some("\n"),
-            _ => None,
+            Part::NewLine { .. } => Some(b"\n".as_bstr()),
+            Part::Overrides(_) => None,
         }
     }
 }
@@ -1128,7 +1149,7 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
             _ => {
                 let s = reader.take_until2(b'{', b'\\');
                 if s.len() > 0 {
-                    parts.push(Part::Text(std::str::from_utf8(s).unwrap().into()));
+                    parts.push(Part::Text(s.as_bstr()));
                 }
             }
         }

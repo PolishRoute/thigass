@@ -1,3 +1,6 @@
+#![allow(clippy::explicit_iter_loop)]
+#![allow(clippy::match_same_arms)]
+
 use bstr::ByteSlice;
 use parser::{parse, parse_curve, ParserError, Part, ReaderError, ScriptParser};
 
