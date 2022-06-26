@@ -899,10 +899,8 @@ fn parse_draw_commands(reader: &mut Reader) -> Result<Vec<DrawCommand>, ParserEr
                 commands.push(DrawCommand::Move(x, y));
             }
             b'l' => {
-                while reader.peek().map_or(false, |c| c.is_ascii_digit() || c == b'-') {
-                    let (x, y) = read_point(reader)?;
-                    commands.push(DrawCommand::Line(x, y));
-                }
+                let (x, y) = read_point(reader)?;
+                commands.push(DrawCommand::Line(x, y));
             }
             b'b' => {
                 let p1 = read_point(reader)?;
