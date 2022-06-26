@@ -706,13 +706,6 @@ impl<'d> Reader<'d> {
         slice
     }
 
-    fn expect_whitespace_or_end(&mut self) -> Result<(), ReaderError> {
-        if self.peek().is_none() {
-            return Ok(());
-        }
-        self.expect_whitespace()
-    }
-
     fn expect_whitespace(&mut self) -> Result<(), ReaderError> {
         let ignored = self.take_while(|b| b.is_ascii_whitespace()).len();
         if ignored > 0 {
@@ -862,9 +855,9 @@ pub enum DrawCommand {
 
 fn read_point(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
     let x = reader.read_float()?;
-    reader.expect_whitespace_or_end()?;
+    reader.expect_whitespace()?;
     let y = reader.read_float()?;
-    reader.expect_whitespace_or_end()?;
+    reader.expect_whitespace()?;
     Ok((x, y))
 }
 
