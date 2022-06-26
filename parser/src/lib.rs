@@ -24,7 +24,7 @@ pub struct Timestamp {
     value: u64,
 }
 
-impl fmt::Debug for Timestamp {
+impl fmt::Display for Timestamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{:02}:{:02}.{:02}",
                self.value / 360_000,
@@ -32,6 +32,12 @@ impl fmt::Debug for Timestamp {
                (self.value / 100) % 60,
                self.value % 100,
         )
+    }
+}
+
+impl fmt::Debug for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Self as fmt::Display>::fmt(self, f)
     }
 }
 
