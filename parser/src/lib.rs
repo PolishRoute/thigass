@@ -976,7 +976,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     parse_float(x2)?,
                     parse_float(y2)?,
                 ),
-                _ => unsupported_overload("clip", &args)?,
+                _ => unsupported_overload(name, &args)?,
             }
         }
         b"pos" => {
@@ -986,7 +986,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     parse_float(x)?,
                     parse_float(y)?,
                 ),
-                _ => unsupported_overload("pos", &args)?,
+                _ => unsupported_overload(name, &args)?,
             }
         }
         b"i" => Effect::Italic(reader.read_bool()?),
@@ -1014,7 +1014,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     accel: None,
                     style: parse_style(style.as_bytes())?,
                 },
-                _ => unsupported_overload("t", &args)?,
+                _ => unsupported_overload(name, &args)?,
             }
         }
         b"fad" => {
@@ -1024,7 +1024,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     t1: parse_float(t1)?,
                     t2: parse_float(t2)?,
                 },
-                _ => unsupported_overload("fad", &args)?,
+                _ => unsupported_overload(name, &args)?,
             }
         }
         b"move" => {
@@ -1046,7 +1046,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     t1: None,
                     t2: None,
                 },
-                _ => unsupported_overload("move", &args)?,
+                _ => unsupported_overload(name, &args)?,
             }
         }
         b"xshad" => Effect::XShadow(reader.read_float()?),
