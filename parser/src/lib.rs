@@ -939,8 +939,13 @@ fn unsupported_overload(name: impl AsRef<[u8]>, args: &[&BStr]) -> Result<!, Par
 
 fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     reader.expect(b'\\')?;
-    let name = reader.take_while(|c| c.is_ascii_alphabetic() && c.is_ascii_lowercase());
-    // TODO: improve handling of effects with string parameters like \fnFontName
+
+    // Handle effects with jointed string arguments first, eg. \fnFontName
+    if reader.try_consume(b"fn") {
+        return Ok(Effect::FontName(reader.read_str()?.into()));
+    }
+
+    let name = reader.take_while(u8::is_ascii_alphabetic);
     let effect = match name {
         b"n" => Effect::NewLine { smart_wrapping: false },
         b"N" => Effect::NewLine { smart_wrapping: true },
@@ -949,7 +954,6 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"bord" => Effect::Border(reader.read_float()?),
         b"xbord" => Effect::XBorder(reader.read_float()?),
         b"ybord" => Effect::YBorder(reader.read_float()?),
-        b"fn" => Effect::FontName(reader.read_str()?.into()),
         b"fscx" => Effect::FontScaleX(reader.read_float()?),
         b"fscy" => Effect::FontScaleY(reader.read_float()?),
         b"fsp" => Effect::FontSpacing(reader.read_float()?),
