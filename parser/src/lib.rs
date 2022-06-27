@@ -790,6 +790,8 @@ pub enum ParserError {
     InvalidCurveOpcode,
     MissingEffectName,
     UnsupportedOverload { args: usize },
+    UnexpectedChar { actual: u8 },
+    UnexpectedEnd,
 }
 
 impl fmt::Display for ParserError {
@@ -1074,10 +1076,8 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                         index: Some(n),
                         value: parse_alpha(reader)?,
                     },
-                    oth => {
-                        reader.dbg();
-                        panic!();
-                    }
+                    Some(c) => return Err(ParserError::UnexpectedChar { actual: c }),
+                    None => return Err(ParserError::UnexpectedEnd),
                 }
             } else {
                 return Err(ParserError::MissingEffectName);
