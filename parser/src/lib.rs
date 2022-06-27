@@ -945,7 +945,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         return Ok(Effect::FontName(reader.read_str()?.into()));
     }
 
-    let name = reader.take_while(u8::is_ascii_alphabetic);
+    let name = reader.take_while(|c| c.is_ascii_alphabetic());
     let effect = match name {
         b"n" => Effect::NewLine { smart_wrapping: false },
         b"N" => Effect::NewLine { smart_wrapping: true },
