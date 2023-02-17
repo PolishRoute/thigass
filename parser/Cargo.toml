@@ -8,5 +8,5 @@ enum-map = "2.1.0"
 tinyvec = { version = "1.6.0", features = [] }
 fast-float = "0.2.0"
 memchr = "2.5.0"
-bstr = "0.2.17"
+bstr = "1.1.0"
 tracing = "0.1.35"

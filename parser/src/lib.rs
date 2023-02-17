@@ -20,6 +20,7 @@ use bstr::{BStr, ByteSlice};
 use enum_map::{Enum, enum_map, EnumArray, EnumMap};
 use tinyvec::ArrayVec;
 
+#[derive(Default)]
 pub struct Timestamp {
     value: u64,
 }
@@ -98,7 +99,7 @@ pub struct Event<'s> {
     pub text: &'s BStr,
 }
 
-#[derive(Hash, Eq, PartialEq, Enum)]
+#[derive(Hash, Eq, PartialEq, Enum, Debug, Copy, Clone)]
 enum EventField {
     Marked,
     Layer,
@@ -190,7 +191,7 @@ impl FromStr for WrapStyle {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Enum)]
+#[derive(Hash, Eq, PartialEq, Enum, Debug, Copy, Clone)]
 enum StyleField {
     Name,
     FontName,
@@ -223,6 +224,12 @@ pub struct Color {
     pub g: u8,
     pub b: u8,
     pub a: u8,
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Self { r: 0, g: 0, b: 0, a: 255 }
+    }
 }
 
 #[derive(Debug)]
@@ -392,8 +399,16 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
         }
     }
 
-    fn value<U: FromBytes>(&self, field: T, values: &[&[u8]]) -> U {
-        U::from_bytes(self.value_of(field, values)).map_err(drop).unwrap()
+    fn value<U: FromBytes + Default>(&self, field: T, values: &[&[u8]]) -> U
+        where T: Copy + fmt::Debug
+    {
+        match U::from_bytes(self.value_of(field, values)) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!("Failed to parse field {:?}: {:?}", field, err);
+                Default::default()
+            }
+        }
     }
 
     fn bool(&self, field: T, values: &[&[u8]]) -> bool {
@@ -411,7 +426,11 @@ impl<T: FromStr> FromBytes for T where <T as FromStr>::Err: fmt::Debug {
     default type Err = <T as FromStr>::Err;
 
     default fn from_bytes(bytes: &[u8]) -> Result<Self, <Self as FromBytes>::Err> {
-        Ok(T::from_str(bytes.to_str().unwrap()).map_err(drop).unwrap())
+        let s = match bytes.to_str() {
+            Ok(s) => s,
+            Err(e) => bytes[..e.valid_up_to()].to_str().unwrap(),
+        };
+        Ok(T::from_str(s).map_err(drop).unwrap())
     }
 }
 
@@ -532,7 +551,9 @@ impl<'s> ScriptParser<'s> {
                 script.events.push((EventType::Comment, self.parse_event(x.as_bstr())));
             } else if let Some(s) = line.strip_prefix(b"Style: ") {
                 let style = self.parse_style(s.as_bstr());
-                script.styles.push(style);
+                if let Ok(style) = style {
+                    script.styles.push(style);
+                }
             } else if line.trim().is_empty() || line.starts_with(b";") {
                 continue;
             } else if let Some(pos) = memchr::memchr(b':', line) {
@@ -588,10 +609,14 @@ impl<'s> ScriptParser<'s> {
     }
 
     #[inline(never)]
-    fn parse_style(&mut self, s: &'s BStr) -> Style {
-        let mapping = self.styles_mapping.as_ref().unwrap();
+    fn parse_style(&mut self, s: &'s BStr) -> Result<Style, ()> {
+        let Some(mapping) = self.styles_mapping.as_ref() else {
+            // Ignore when not in section
+            tracing::warn!("Style without field mapping: {}", s.as_bstr());
+            return Err(());
+        };
         let fields: ArrayVec<[_; StyleField::LENGTH]> = s.splitn(mapping.len(), |b| *b == b',').collect();
-        Style {
+        let style = Style {
             name: mapping.value(StyleField::Name, &fields),
             font_name: mapping.value(StyleField::FontName, &fields),
             font_size: mapping.value(StyleField::FontSize, &fields),
@@ -615,7 +640,8 @@ impl<'s> ScriptParser<'s> {
             margin_r: mapping.value(StyleField::MarginR, &fields),
             margin_v: mapping.value(StyleField::MarginV, &fields),
             encoding: mapping.value(StyleField::Encoding, &fields),
-        }
+        };
+        Ok(style)
     }
 
     #[inline(never)]
@@ -786,6 +812,7 @@ pub enum ReaderError {
 #[derive(Debug)]
 pub enum ParserError {
     ReaderError(ReaderError),
+    ColorError(ColorParseError),
     UnsupportedEffect(String),
     InvalidCurveOpcode,
     MissingEffectName,
@@ -805,6 +832,12 @@ impl std::error::Error for ParserError {}
 impl From<ReaderError> for ParserError {
     fn from(e: ReaderError) -> Self {
         Self::ReaderError(e)
+    }
+}
+
+impl From<ColorParseError> for ParserError {
+    fn from(e: ColorParseError) -> Self {
+        Self::ColorError(e)
     }
 }
 
@@ -843,15 +876,14 @@ pub enum Effect {
     NewLine { smart_wrapping: bool },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Alignment(u8);
 
 impl FromStr for Alignment {
-    type Err = ();
+    type Err = ParseIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s.parse().map_err(|_| ())?;
-        Ok(Alignment(value))
+        Ok(Alignment(s.parse()?))
     }
 }
 
@@ -1088,12 +1120,12 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     Ok(effect)
 }
 
-fn parse_color(reader: &mut Reader) -> Result<Color, ReaderError> {
+fn parse_color(reader: &mut Reader) -> Result<Color, ParserError> {
     reader.expect(b'&')?;
     reader.expect(b'H')?;
     let hex = reader.take_while(|c| c.is_ascii_hexdigit());
     reader.expect(b'&')?;
-    Ok(parse_hex_color(hex).unwrap())
+    Ok(parse_hex_color(hex)?)
 }
 
 fn parse_alpha(reader: &mut Reader) -> Result<u8, ReaderError> {

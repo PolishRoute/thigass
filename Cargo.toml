@@ -1,4 +1,6 @@
 [workspace]
 members = ["parser", "playground", "tester"]
+
 [profile.release]
 debug = true
+lto = "thin"
