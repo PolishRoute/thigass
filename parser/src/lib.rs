@@ -399,20 +399,21 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
         }
     }
 
-    fn value<U: FromBytes + Default>(&self, field: T, values: &[&[u8]]) -> U
+    #[track_caller]
+    fn value<U: FromBytes + Default + fmt::Debug>(&self, field: T, values: &[&[u8]]) -> U
         where T: Copy + fmt::Debug
     {
-        match U::from_bytes(self.value_of(field, values)) {
+        let value = self.value_of(field, values);
+        match U::from_bytes(value) {
             Ok(value) => value,
             Err(err) => {
-                tracing::warn!("Failed to parse field {:?}: {:?}", field, err);
+                if !value.is_empty() {
+                    tracing::warn!("Failed to parse value '{}' into field '{:?}' with error '{:?}'; using default {:?}", value.as_bstr() ,field, err, U::default());
+                    tracing::debug!("{:?}", std::panic::Location::caller());
+                }
                 Default::default()
             }
         }
-    }
-
-    fn bool(&self, field: T, values: &[&[u8]]) -> bool {
-        self.value_of(field, values) == b"1"
     }
 }
 
@@ -439,6 +440,18 @@ impl FromBytes for f32 {
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err> {
         fast_float::parse(bytes)
+    }
+}
+
+impl FromBytes for bool {
+    type Err = ();
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err> {
+        match bytes {
+            b"0" | b"-1" => Ok(true),
+            b"1" => Ok(true),
+            _ => Err(())
+        }
     }
 }
 
@@ -624,10 +637,10 @@ impl<'s> ScriptParser<'s> {
             secondary_colour: mapping.value(StyleField::SecondaryColour, &fields),
             outline_colour: mapping.value(StyleField::OutlineColour, &fields),
             back_colour: mapping.value(StyleField::BackColour, &fields),
-            bold: mapping.bool(StyleField::Bold, &fields),
-            italic: mapping.bool(StyleField::Italic, &fields),
-            underline: mapping.bool(StyleField::Underline, &fields),
-            strike_out: mapping.bool(StyleField::StrikeOut, &fields),
+            bold: mapping.value(StyleField::Bold, &fields),
+            italic: mapping.value(StyleField::Italic, &fields),
+            underline: mapping.value(StyleField::Underline, &fields),
+            strike_out: mapping.value(StyleField::StrikeOut, &fields),
             scale_x: mapping.value(StyleField::ScaleX, &fields),
             scale_y: mapping.value(StyleField::ScaleY, &fields),
             spacing: mapping.value(StyleField::Spacing, &fields),
@@ -649,7 +662,7 @@ impl<'s> ScriptParser<'s> {
         let mapping = self.events_mapping.as_ref().unwrap();
         let fields: ArrayVec<[_; EventField::LENGTH]> = data.splitn(mapping.len(), |b| *b == b',').collect();
         let event = Event {
-            marked: mapping.bool(EventField::Marked, &fields),
+            marked: mapping.value(EventField::Marked, &fields),
             layer: mapping.value(EventField::Layer, &fields),
             start: mapping.value(EventField::Start, &fields),
             end: mapping.value(EventField::End, &fields),
