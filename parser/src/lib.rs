@@ -1,4 +1,3 @@
-#![feature(let_else)]
 #![feature(never_type)]
 #![feature(slice_as_chunks)]
 #![feature(specialization)]
