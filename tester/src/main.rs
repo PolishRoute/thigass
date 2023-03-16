@@ -49,7 +49,7 @@ fn parse_file(path: impl AsRef<Path>) -> anyhow::Result<()> {
         }
     }
 
-    tracing::info!("File parsed in {:?}; {}MB/s", s.elapsed(), (content.len() as f32 / 1024.0 / 1024.0) / s.elapsed().as_secs_f32());
+    tracing::info!("File of {} bytes parsed in {:?}; {}MB/s", content.len(), s.elapsed(), (content.len() as f32 / 1024.0 / 1024.0) / s.elapsed().as_secs_f32());
 
     Ok(())
 }
