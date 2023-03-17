@@ -45,6 +45,7 @@ fn parse_file(path: impl AsRef<Path>) -> anyhow::Result<()> {
                 }
                 Part::Overrides(_) => {}
                 Part::NewLine { .. } => {}
+                Part::Horizontal => {}
             }
         }
     }

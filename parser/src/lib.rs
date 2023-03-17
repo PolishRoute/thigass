@@ -874,6 +874,7 @@ impl From<ColorParseError> for ParserError {
 pub enum Effect {
     Align(Alignment),
     Blur(f32),
+    BlurEdges(bool),
     Border(f32),
     XBorder(f32),
     YBorder(f32),
@@ -886,6 +887,7 @@ pub enum Effect {
     RotateY(f32),
     RotateZ(f32),
     ShearingX(f32),
+    ShearingY(f32),
     Color { index: Option<u32>, color: Color },
     Alpha { index: Option<u32>, value: u8 },
     Pos(f32, f32),
@@ -903,6 +905,8 @@ pub enum Effect {
     Fade { t1: f32, t2: f32 },
     Move { x1: f32, y1: f32, x2: f32, y2: f32, t1: Option<f32>, t2: Option<f32> },
     NewLine { smart_wrapping: bool },
+    Horizontal,
+    Org(u32, u32),
 }
 
 #[derive(Debug, Default)]
@@ -1011,6 +1015,12 @@ fn parse_float(s: &[u8]) -> Result<f32, ReaderError> {
     Ok(value)
 }
 
+fn parse_integer(s: &[u8]) -> Result<u32, ReaderError> {
+    let mut reader = Reader::new(s);
+    let value = reader.read_integer()?;
+    Ok(value)
+}
+
 fn unsupported_overload(name: impl AsRef<[u8]>, args: &[&BStr]) -> Result<!, ParserError> {
     tracing::warn!("Unsupported overload for '{}': {:?}", name.as_ref().as_bstr(), args);
     Err(ParserError::UnsupportedOverload { args: args.len() })
@@ -1028,7 +1038,9 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     let effect = match name {
         b"n" => Effect::NewLine { smart_wrapping: false },
         b"N" => Effect::NewLine { smart_wrapping: true },
+        b"h" => Effect::Horizontal,
         b"an" => Effect::Align(Alignment(reader.read_integer()?.try_into().unwrap())),
+        b"be" => Effect::BlurEdges(reader.read_bool()?),
         b"blur" => Effect::Blur(reader.read_float()?),
         b"bord" => Effect::Border(reader.read_float()?),
         b"xbord" => Effect::XBorder(reader.read_float()?),
@@ -1041,7 +1053,8 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"fry" => Effect::RotateY(reader.read_float()?),
         b"frz" => Effect::RotateZ(reader.read_float()?),
         b"fax" => Effect::ShearingX(reader.read_float()?),
-        b"clip" => {
+        b"fay" => Effect::ShearingY(reader.read_float()?),
+        b"clip" | b"iclip" => { // TODO: split
             let args = parse_args(reader)?;
             match args[..] {
                 [curve] => {
@@ -1064,6 +1077,16 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 [x, y] => Effect::Pos(
                     parse_float(x)?,
                     parse_float(y)?,
+                ),
+                _ => unsupported_overload(name, &args)?,
+            }
+        }
+        b"org" => {
+            let args = parse_args(reader)?;
+            match args[..] {
+                [x, y] => Effect::Org(
+                    parse_integer(x)?,
+                    parse_integer(y)?,
                 ),
                 _ => unsupported_overload(name, &args)?,
             }
@@ -1140,7 +1163,14 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             index: None,
             value: parse_alpha(reader)?,
         },
-        name if !name.is_empty() => return Err(ParserError::UnsupportedEffect(name.to_str_lossy().into_owned())),
+        name if !name.is_empty() => {
+            if reader.peek() == Some(b'(') {
+                let args = parse_args(reader)?;
+                tracing::warn!("unsupported effect {} {:?}", name.as_bstr(), args);
+            }
+
+            return Err(ParserError::UnsupportedEffect(name.to_str_lossy().into_owned()))
+        },
         _ => {
             if let Some(b'0'..=b'9') = reader.peek() {
                 let n = reader.read_integer()?;
@@ -1197,7 +1227,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
                         items.push(item);
                     }
                     Err(e) => {
-                        tracing::warn!("unsupported effect: {:?}", e);
+                        // tracing::warn!("unsupported effect: {:?}", e);
                     }
                 }
             }
@@ -1220,6 +1250,7 @@ pub enum Part<'s> {
     Text(&'s BStr),
     Overrides(Vec<Effect>),
     NewLine { smart_wrapping: bool },
+    Horizontal,
 }
 
 impl Part<'_> {
@@ -1229,6 +1260,7 @@ impl Part<'_> {
             Part::Text(s) => Some(s),
             Part::NewLine { .. } => Some(b"\n".as_bstr()),
             Part::Overrides(_) => None,
+            Part::Horizontal => None,
         }
     }
 }
@@ -1251,6 +1283,7 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
                 match reader.consume() {
                     Some(b'n') => parts.push(Part::NewLine { smart_wrapping: false }),
                     Some(b'N') => parts.push(Part::NewLine { smart_wrapping: true }),
+                    Some(b'h') => parts.push(Part::Horizontal),
                     Some(other) => {
                         tracing::warn!("invalid escaped char '{}'", other as char);
                     }
