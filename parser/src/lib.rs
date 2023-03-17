@@ -609,7 +609,7 @@ impl<'s> ScriptParser<'s> {
                     b"Video Zoom" => script.info.video_zoom = parse_or_skip!(value),
                     b"Scroll Position" => script.info.scroll_position = parse_or_skip!(value),
                     _ => {
-                        tracing::warn!("Invalid key for script info: '{}' with value '{}'", name, value.as_bstr())
+                        tracing::warn!("Unsupported key for script info: '{}' with value '{}'", name, value.as_bstr())
                     }
                 }
             } else {
@@ -698,16 +698,23 @@ impl<'d> Reader<'d> {
     }
 
     #[must_use]
+    fn is_end(&self) -> bool {
+        self.pos == self.buf.len()
+    }
+
+    #[must_use]
     fn consume(&mut self) -> Option<u8> {
         let x = self.buf.get(self.pos).copied()?;
         self.pos += 1;
         Some(x)
     }
 
+    #[must_use]
     fn peek(&self) -> Option<u8> {
         self.buf.get(self.pos).copied()
     }
 
+    #[must_use]
     fn try_consume(&mut self, prefix: &[u8]) -> bool {
         if self.buf[self.pos..].starts_with(prefix) {
             self.pos += prefix.len();
@@ -717,6 +724,7 @@ impl<'d> Reader<'d> {
         }
     }
 
+    #[must_use]
     fn take_while(&mut self, f: impl Fn(u8) -> bool) -> &'d [u8] {
         let pos = self.pos;
         while let Some(p) = self.peek() {
@@ -728,20 +736,27 @@ impl<'d> Reader<'d> {
         &self.buf[pos..self.pos]
     }
 
-    fn take_until(&mut self, term1: u8) -> &'d [u8] {
-        let len = memchr::memchr(term1, &self.buf[self.pos..])
-            .unwrap_or_else(|| self.buf.len() - self.pos);
+    #[must_use]
+    fn take_until(&mut self, term1: u8) -> Option<&'d [u8]> {
+        let len = memchr::memchr(term1, &self.buf[self.pos..])?;
         let slice = &self.buf[self.pos..][..len];
         self.pos += len;
-        slice
+        Some(slice)
     }
 
-    fn take_until2(&mut self, term1: u8, term2: u8) -> &'d [u8] {
-        let len = memchr::memchr2(term1, term2, &self.buf[self.pos..])
-            .unwrap_or_else(|| self.buf.len() - self.pos);
+    #[must_use]
+    fn take_until2(&mut self, term1: u8, term2: u8) -> Option<&'d [u8]> {
+        let len = memchr::memchr2(term1, term2, &self.buf[self.pos..])?;
         let slice = &self.buf[self.pos..][..len];
         self.pos += len;
-        slice
+        Some(slice)
+    }
+
+    #[must_use]
+    fn take_remaining(&mut self) -> &'d [u8] {
+        let remaining = &self.buf[self.pos..];
+        self.pos += remaining.len();
+        remaining
     }
 
     fn expect_whitespace_or_end(&mut self) -> Result<(), ReaderError> {
@@ -769,7 +784,8 @@ impl<'d> Reader<'d> {
 
     fn read_str(&mut self) -> Result<&str, ReaderError> {
         let pos = self.pos;
-        let s = self.take_until(b'\\');
+        let s = self.take_until(b'\\')
+            .unwrap_or_else(|| self.take_remaining());
         let s = std::str::from_utf8(s).map_err(|_| ReaderError::InvalidStr { pos })?;
         Ok(s)
     }
@@ -819,6 +835,7 @@ pub enum ReaderError {
     InvalidBool { pos: usize },
     InvalidStr { pos: usize },
     ExpectedWhitespace { pos: usize },
+    UnexpectedEnd,
 }
 
 #[derive(Debug)]
@@ -900,29 +917,42 @@ impl FromStr for Alignment {
 }
 
 #[derive(Debug)]
+pub struct Point(f32, f32);
+
+#[derive(Debug)]
 pub enum DrawCommand {
-    CloseAndMove(f32, f32),
-    Move(f32, f32),
-    Line(f32, f32),
-    Bezier([(f32, f32); 3]),
+    Close,
+    Move(Point),
+    Line(Point),
+    Bezier([Point; 3]),
 }
 
-fn read_point(reader: &mut Reader) -> Result<(f32, f32), ReaderError> {
+fn read_point(reader: &mut Reader) -> Result<Point, ReaderError> {
     let x = reader.read_float()?;
     reader.expect_whitespace()?;
     let y = reader.read_float()?;
     reader.expect_whitespace_or_end()?;
-    Ok((x, y))
+    Ok(Point(x, y))
 }
 
-fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, ReaderError> {
+fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 6]>, ReaderError> {
     reader.expect(b'(')?;
-    let args = reader
-        .take_until(b')')
-        .split(|b| *b == b',')
-        .map(|it| it.as_bstr())
-        .collect();
-    reader.expect(b')')?;
+    let mut args = ArrayVec::new();
+    loop {
+        let Some(arg) = reader.take_until2(b',', b')') else {
+            return Err(ReaderError::UnexpectedEnd);
+        };
+
+        if args.try_push(arg.as_bstr()).is_some() {
+            tracing::warn!("ignoring argument: {:?}", arg);
+        }
+
+        match reader.consume().expect("not at the end") {
+            b',' => (),
+            b')' => break,
+            _ => unreachable!(),
+        }
+    }
     Ok(args)
 }
 
@@ -945,16 +975,17 @@ fn parse_draw_commands(reader: &mut Reader) -> Result<Vec<DrawCommand>, ParserEr
 
         match opcode {
             b'm' => {
-                let (x, y) = read_point(reader)?;
-                commands.push(DrawCommand::CloseAndMove(x, y));
+                let p = read_point(reader)?;
+                commands.push(DrawCommand::Close);
+                commands.push(DrawCommand::Move(p));
             }
             b'n' => {
-                let (x, y) = read_point(reader)?;
-                commands.push(DrawCommand::Move(x, y));
+                let p = read_point(reader)?;
+                commands.push(DrawCommand::Move(p));
             }
             b'l' => {
-                let (x, y) = read_point(reader)?;
-                commands.push(DrawCommand::Line(x, y));
+                let p = read_point(reader)?;
+                commands.push(DrawCommand::Line(p));
             }
             b'b' => {
                 let p1 = read_point(reader)?;
@@ -975,7 +1006,9 @@ pub fn parse_curve(s: &[u8]) -> Result<Vec<DrawCommand>, ParserError> {
 }
 
 fn parse_float(s: &[u8]) -> Result<f32, ReaderError> {
-    Reader::new(s).read_float()
+    let mut reader = Reader::new(s);
+    let value = reader.read_float()?;
+    Ok(value)
 }
 
 fn unsupported_overload(name: impl AsRef<[u8]>, args: &[&BStr]) -> Result<!, ParserError> {
@@ -1159,13 +1192,21 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
     while let Some(x) = reader.peek() {
         match x {
             b'\\' => {
-                items.push(parse_effect(reader)?);
+                match parse_effect(reader) {
+                    Ok(item) => {
+                        items.push(item);
+                    }
+                    Err(e) => {
+                        tracing::warn!("unsupported effect: {:?}", e);
+                    }
+                }
             }
             b'}' => {
                 break;
             }
             _ => {
-                let comment = reader.take_until2(b'\\', b'}');
+                let comment = reader.take_until2(b'\\', b'}')
+                    .unwrap_or_else(|| reader.take_remaining());
                 tracing::info!("Comment: {}", comment.as_bstr());
             }
         }
@@ -1210,11 +1251,15 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
                 match reader.consume() {
                     Some(b'n') => parts.push(Part::NewLine { smart_wrapping: false }),
                     Some(b'N') => parts.push(Part::NewLine { smart_wrapping: true }),
-                    _ => { /* ignore */ }
+                    Some(other) => {
+                        tracing::warn!("invalid escaped char '{}'", other as char);
+                    }
+                    None => { /* ignore */ }
                 }
             }
             _ => {
-                let s = reader.take_until2(b'{', b'\\');
+                let s = reader.take_until2(b'{', b'\\')
+                    .unwrap_or_else(|| reader.take_remaining());
                 if s.len() > 0 {
                     parts.push(Part::Text(s.as_bstr()));
                 }
