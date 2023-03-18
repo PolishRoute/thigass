@@ -784,8 +784,7 @@ impl<'d> Reader<'d> {
 
     fn read_str(&mut self) -> Result<&str, ReaderError> {
         let pos = self.pos;
-        let s = self.take_until(b'\\')
-            .unwrap_or_else(|| self.take_remaining());
+        let s = self.take_while(|b| !matches!(b, b'\\' | b'{' | b'}'));
         let s = std::str::from_utf8(s).map_err(|_| ReaderError::InvalidStr { pos })?;
         Ok(s)
     }
