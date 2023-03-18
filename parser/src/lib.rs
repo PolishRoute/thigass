@@ -115,7 +115,7 @@ enum EventField {
 
 fn parse_events_mapping(config: &BStr) -> FieldMapping<EventField> {
     let mut mapping = FieldMapping::empty();
-    for (idx, field) in config.split_str(b", ").enumerate() {
+    for (idx, field) in config.split_str(b",").map(|it| it.trim()).enumerate() {
         let key = match field {
             b"Layer" => EventField::Layer,
             b"Marked" => EventField::Marked,
