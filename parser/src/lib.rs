@@ -129,11 +129,12 @@ fn parse_events_mapping(config: &BStr) -> FieldMapping<EventField> {
             b"Effect" => EventField::Effect,
             b"Text" => EventField::Text,
             _ => {
+                mapping.set(idx, None);
                 tracing::warn!("Unsupported field for events: {}", field.as_bstr());
                 continue;
             }
         };
-        mapping.set(key, idx);
+        mapping.set(idx, Some(key));
     }
     mapping
 }
@@ -352,11 +353,12 @@ fn parse_styles_mapping(s: &BStr) -> FieldMapping<StyleField> {
             b"MarginV" => StyleField::MarginV,
             b"Encoding" => StyleField::Encoding,
             other => {
+                mapping.set(idx, None);
                 tracing::warn!("Unsupported field for styles: {}", other.as_bstr());
                 continue;
             }
         };
-        mapping.set(key, idx);
+        mapping.set(idx, Some(key));
     }
     mapping
 }
@@ -372,6 +374,7 @@ pub struct ScriptParser<'s> {
 struct FieldMapping<T: EnumArray<usize>> {
     inner: EnumMap<T, usize>,
     inserted: usize,
+    ignored: usize,
 }
 
 impl<T: EnumArray<usize>> FieldMapping<T> {
@@ -379,16 +382,22 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
         Self {
             inner: enum_map! { _ => usize::MAX },
             inserted: 0,
+            ignored: 0,
         }
     }
 
-    fn len(&self) -> usize {
-        self.inserted
+    fn columns(&self) -> usize {
+        self.inserted + self.ignored
     }
 
-    fn set(&mut self, field: T, idx: usize) {
-        self.inner[field] = idx;
-        self.inserted += 1;
+    fn set(&mut self, idx: usize, field: Option<T>) {
+        if let Some(field) = field {
+            self.inner[field] = idx;
+            self.inserted += 1;
+        } else {
+            tracing::warn!("unknown field at #{idx}");
+            self.ignored += 1;
+        }
     }
 
     fn value_of<'s>(&self, field: T, values: &[&'s [u8]]) -> &'s [u8] {
@@ -407,7 +416,8 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
             Ok(value) => value,
             Err(err) => {
                 if !value.is_empty() {
-                    tracing::warn!("Failed to parse value '{}' into field '{:?}' with error '{:?}'; using default {:?}", value.as_bstr() ,field, err, U::default());
+                    tracing::warn!("Failed to parse value '{}' into field '{:?}' with error '{:?}'; using default {:?}",
+                        value.as_bstr(), field, err, U::default());
                     tracing::debug!("{:?}", std::panic::Location::caller());
                 }
                 Default::default()
@@ -422,7 +432,7 @@ trait FromBytes: Sized {
     fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err>;
 }
 
-impl<T: FromStr> FromBytes for T where <T as FromStr>::Err: fmt::Debug {
+impl<T: FromStr + Default + fmt::Debug> FromBytes for T where <T as FromStr>::Err: fmt::Debug {
     default type Err = <T as FromStr>::Err;
 
     default fn from_bytes(bytes: &[u8]) -> Result<Self, <Self as FromBytes>::Err> {
@@ -430,6 +440,10 @@ impl<T: FromStr> FromBytes for T where <T as FromStr>::Err: fmt::Debug {
             Ok(s) => s,
             Err(e) => bytes[..e.valid_up_to()].to_str().unwrap(),
         };
+        if s.is_empty() {
+            tracing::warn!("cannot parse '{}' as {}. using default: {:?}", s, std::any::type_name::<T>(), &T::default());
+            return Ok(T::default());
+        }
         Ok(T::from_str(s).map_err(drop).unwrap())
     }
 }
@@ -627,7 +641,7 @@ impl<'s> ScriptParser<'s> {
             tracing::warn!("Style without field mapping: {}", s.as_bstr());
             return Err(());
         };
-        let fields: ArrayVec<[_; StyleField::LENGTH]> = s.splitn(mapping.len(), |b| *b == b',').collect();
+        let fields: ArrayVec<[_; StyleField::LENGTH]> = s.splitn(mapping.columns(), |b| *b == b',').collect();
         let style = Style {
             name: mapping.value(StyleField::Name, &fields),
             font_name: mapping.value(StyleField::FontName, &fields),
@@ -659,7 +673,7 @@ impl<'s> ScriptParser<'s> {
     #[inline(never)]
     fn parse_event(&mut self, data: &'s BStr) -> Event<'s> {
         let mapping = self.events_mapping.as_ref().unwrap();
-        let fields: ArrayVec<[_; EventField::LENGTH]> = data.splitn(mapping.len(), |b| *b == b',').collect();
+        let fields: ArrayVec<[_; EventField::LENGTH]> = data.splitn(mapping.columns(), |b| *b == b',').collect();
         let event = Event {
             marked: mapping.value(EventField::Marked, &fields),
             layer: mapping.value(EventField::Layer, &fields),
@@ -938,7 +952,7 @@ fn read_point(reader: &mut Reader) -> Result<Point, ReaderError> {
     Ok(Point(x, y))
 }
 
-fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 6]>, ReaderError> {
+fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, ReaderError> {
     reader.expect(b'(')?;
     let mut args = ArrayVec::new();
     loop {
@@ -947,7 +961,7 @@ fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 6]>, Re
         };
 
         if args.try_push(arg.as_bstr()).is_some() {
-            tracing::warn!("ignoring argument: {:?}", arg);
+            tracing::warn!("ignoring argument: {}", arg.as_bstr());
         }
 
         match reader.consume().expect("not at the end") {
