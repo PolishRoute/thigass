@@ -877,19 +877,32 @@ impl<'d> Reader<'d> {
         Ok(self.try_read_integer().unwrap_or(0))
     }
 
+    #[inline]
+    fn consume_if(&mut self, f: impl FnOnce(u8) -> bool) -> Option<u8> {
+        match self.peek() {
+            Some(x) if f(x) => {
+                self.consume().unwrap();
+                Some(x)
+            },
+            _ => None,
+        }
+    }
+
     fn read_bool(&mut self) -> Result<bool, ReaderError> {
-        match self.consume() {
-            Some(b'0') => Ok(false),
+        match self.consume_if(|b| matches!(b, b'0' | b'1')) {
             Some(b'1') => Ok(true),
-            _ => Err(ReaderError::InvalidBool { pos: self.pos - 1 }),
+            _ => Ok(false),
         }
     }
 
     fn expect(&mut self, b: u8) -> Result<(), ReaderError> {
-        if self.try_consume(&[b]) {
-            Ok(())
-        } else {
-            Err(ReaderError::InvalidChar { pos: self.pos, expected: b })
+        match self.peek() {
+            Some(actual) if actual == b => {
+                self.consume().unwrap();
+                Ok(())
+            }
+            Some(actual) => Err(ReaderError::InvalidChar { pos: self.pos, expected: b, actual }),
+            None => Err(ReaderError::UnexpectedEnd),
         }
     }
 
@@ -904,7 +917,7 @@ impl<'d> Reader<'d> {
 pub enum ReaderError {
     InvalidInt { pos: usize },
     InvalidFloat { pos: usize },
-    InvalidChar { pos: usize, expected: u8 },
+    InvalidChar { pos: usize, expected: u8, actual: u8 },
     InvalidBool { pos: usize },
     InvalidStr { pos: usize },
     ExpectedWhitespace { pos: usize },
@@ -944,6 +957,12 @@ impl From<ColorParseError> for ParserError {
 }
 
 #[derive(Debug)]
+pub enum Alpha {
+    Percent(u8),
+    Byte(u8),
+}
+
+#[derive(Debug)]
 pub enum Effect {
     Align(Alignment),
     Blur(f32),
@@ -951,8 +970,10 @@ pub enum Effect {
     Border(f32),
     XBorder(f32),
     YBorder(f32),
+    FontEncoding,
     FontName(String),
     FontSize(f32),
+    FontScale(f32),
     FontScaleX(f32),
     FontScaleY(f32),
     FontSpacing(f32),
@@ -961,25 +982,35 @@ pub enum Effect {
     RotateZ(f32),
     ShearingX(f32),
     ShearingY(f32),
-    Color { index: Option<u32>, color: Color },
-    Alpha { index: Option<u32>, value: u8 },
+    Fx(f32),
+    Fy(f32),
+    Fz(f32),
+    Color { index: Option<u32>, color: Option<Color> },
+    Alpha { index: Option<u32>, value: Alpha },
     Pos(f32, f32),
     DrawScale(f32),
-    Clip { mask: Vec<DrawCommand> },
+    BaselineOffset(f32),
+    Clip { mask: Vec<DrawCommand>, scale: f32 },
     ClipRect(f32, f32, f32, f32),
     Bold(bool),
     Italic(bool),
+    Underline(bool),
+    StrikeOut(bool),
     Shadow(f32),
     XShadow(f32),
     YShadow(f32),
     WrappingStyle(u32),
-    Reset,
+    Reset(Option<String>),
     Transition { t1: Option<f32>, t2: Option<f32>, accel: Option<f32>, style: Vec<Effect> },
-    Fade { t1: f32, t2: f32 },
+    FadeAlpha { t1: f32, t2: f32 },
+    Fade { a1: f32, a2: f32, a3: f32, t1: f32, t2: f32, t3: f32, t4: f32 },
     Move { x1: f32, y1: f32, x2: f32, y2: f32, t1: Option<f32>, t2: Option<f32> },
     NewLine { smart_wrapping: bool },
     Horizontal,
     Org(u32, u32),
+    Highlight(u32),
+    FillUpHighlight(u32),
+    OutlineHighlight(u32),
 }
 
 #[derive(Debug, Default)]
@@ -1106,38 +1137,62 @@ fn unsupported_overload(name: impl AsRef<[u8]>, args: &[&BStr]) -> Result<!, Par
 fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     reader.expect(b'\\')?;
 
-    // Handle effects with jointed string arguments first, eg. \fnFontName
-    if reader.try_consume(b"fn") {
-        return Ok(Effect::FontName(reader.read_str()?.into()));
+    // Handle effects with jointed string argument, eg. \fnFontName
+    const WITH_STR_ARGS: [&[u8]; 7] = [b"fn", b"n", b"N", b"alpha", b"r", b"clip", b"c"];
+
+    let mut name = None;
+    for prefix in WITH_STR_ARGS {
+        if reader.try_consume(prefix) {
+            name = Some(prefix);
+            break;
+        }
     }
 
-    let name = reader.take_while(|c| c.is_ascii_alphabetic());
+    let name = match name {
+        Some(name) => name,
+        None => reader.take_while(|c| c.is_ascii_alphabetic()),
+    };
+
     let effect = match name {
         b"n" => Effect::NewLine { smart_wrapping: false },
         b"N" => Effect::NewLine { smart_wrapping: true },
         b"h" => Effect::Horizontal,
-        b"an" => Effect::Align(Alignment(reader.read_integer()?.try_into().unwrap())),
-        b"be" => Effect::BlurEdges(reader.read_bool()?),
+        b"an" | b"a" => Effect::Align(Alignment(reader.read_integer()?.try_into().unwrap())), // TODO: handle differences?
+        b"be" => {
+            // TODO: can be a float... "\be1.5"
+            Effect::BlurEdges(reader.read_bool()?)
+        },
         b"blur" => Effect::Blur(reader.read_float()?),
         b"bord" => Effect::Border(reader.read_float()?),
         b"xbord" => Effect::XBorder(reader.read_float()?),
         b"ybord" => Effect::YBorder(reader.read_float()?),
+        b"fe" => Effect::FontEncoding,
+        b"fn" => Effect::FontName(reader.read_str()?.into()),
+        b"fsc" => Effect::FontScale(reader.read_float()?),
         b"fscx" => Effect::FontScaleX(reader.read_float()?),
         b"fscy" => Effect::FontScaleY(reader.read_float()?),
         b"fsp" => Effect::FontSpacing(reader.read_float()?),
         b"fs" => Effect::FontSize(reader.read_float()?),
         b"frx" => Effect::RotateX(reader.read_float()?),
         b"fry" => Effect::RotateY(reader.read_float()?),
-        b"frz" => Effect::RotateZ(reader.read_float()?),
+        b"frz" | b"fr" => Effect::RotateZ(reader.read_float()?),
         b"fax" => Effect::ShearingX(reader.read_float()?),
         b"fay" => Effect::ShearingY(reader.read_float()?),
+        b"fx" => Effect::Fx(reader.read_float()?),
+        b"fy" => Effect::Fy(reader.read_float()?),
+        b"fz" => Effect::Fz(reader.read_float()?),
         b"clip" | b"iclip" => { // TODO: split
             let args = parse_args(reader)?;
             match args[..] {
                 [curve] => {
                     let mut reader = Reader::new(curve.as_bytes());
                     let cmds = parse_draw_commands(&mut reader)?;
-                    Effect::Clip { mask: cmds }
+                    Effect::Clip { mask: cmds, scale: 1.0 }
+                }
+                [scale, curve] => {
+                    let mut reader = Reader::new(curve.as_bytes());
+                    let cmds = parse_draw_commands(&mut reader)?;
+                    Effect::Clip { mask: cmds, scale: parse_float(scale)? }
                 }
                 [x1, y1, x2, y2] => Effect::ClipRect(
                     parse_float(x1)?,
@@ -1170,6 +1225,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         }
         b"i" => Effect::Italic(reader.read_bool()?),
         b"p" => Effect::DrawScale(reader.read_float()?),
+        b"pbo" => Effect::BaselineOffset(reader.read_float()?),
         b"b" => Effect::Bold(reader.read_bool()?),
         b"shad" => Effect::Shadow(reader.read_float()?),
         b"t" => {
@@ -1187,6 +1243,12 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     accel: None,
                     style: parse_style(style.as_bytes())?,
                 },
+                [t1, t2] => Effect::Transition {
+                    t1: Some(parse_float(t1)?),
+                    t2: Some(parse_float(t2)?),
+                    accel: None,
+                    style: Vec::new(),
+                },
                 [style] => Effect::Transition {
                     t1: None,
                     t2: None,
@@ -1196,10 +1258,20 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 _ => unsupported_overload(name, &args)?,
             }
         }
-        b"fad" => {
+        b"fade" | b"fad" => {
             let args = parse_args(reader)?;
             match args[..] {
-                [t1, t2] => Effect::Fade {
+                [a1, a2, a3, t1, t2, t3, t4] => Effect::Fade {
+                    a1: parse_float(a1)?,
+                    a2: parse_float(a2)?,
+                    a3: parse_float(a3)?,
+                    t1: parse_float(t1)?,
+                    t2: parse_float(t2)?,
+                    t3: parse_float(t3)?,
+                    t4: parse_float(t4)?,
+
+                },
+                [t1, t2] => Effect::FadeAlpha {
                     t1: parse_float(t1)?,
                     t2: parse_float(t2)?,
                 },
@@ -1231,7 +1303,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"xshad" => Effect::XShadow(reader.read_float()?),
         b"yshad" => Effect::YShadow(reader.read_float()?),
         b"q" => Effect::WrappingStyle(reader.read_integer()?),
-        b"r" => Effect::Reset,
+        b"r" => Effect::Reset(None),
         b"c" => Effect::Color {
             index: None,
             color: parse_color(reader)?,
@@ -1240,28 +1312,46 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             index: None,
             value: parse_alpha(reader)?,
         },
+        b"k" => Effect::Highlight(reader.read_integer()?),
+        b"kf" | b"K" => Effect::FillUpHighlight(reader.read_integer()?),
+        b"ko" => Effect::OutlineHighlight(reader.read_integer()?),
+        b"u" => Effect::Underline(reader.read_bool()?),
+        b"s" => Effect::StrikeOut(reader.read_bool()?),
         name if !name.is_empty() => {
-            if reader.peek() == Some(b'(') {
-                let args = parse_args(reader)?;
-                tracing::warn!("unsupported effect {} {:?}", name.as_bstr(), args);
-            }
+            let args = if reader.peek() == Some(b'(') {
+                parse_args(reader)?
+            } else {
+                Default::default()
+            };
 
-            return Err(ParserError::UnsupportedEffect(name.to_str_lossy().into_owned()))
-        },
+            tracing::warn!("unsupported effect {} {:?}", name.as_bstr(), args);
+            return Err(ParserError::UnsupportedEffect(name.to_str_lossy().into_owned()));
+        }
         _ => {
             if let Some(b'0'..=b'9') = reader.peek() {
                 let n = reader.read_integer()?;
-                match reader.consume() {
-                    Some(b'c') => Effect::Color {
-                        index: Some(n),
-                        color: parse_color(reader)?,
+                match reader.peek() {
+                    Some(b'c') => {
+                        reader.consume().unwrap();
+                        Effect::Color {
+                            index: Some(n),
+                            color: parse_color(reader)?,
+                        }
+                    }
+                    Some(b'a') => {
+                        reader.consume().unwrap();
+                        Effect::Alpha {
+                            index: Some(n),
+                            value: parse_alpha(reader)?,
+                        }
+                    }
+                    Some(c) => {
+                        // TODO: color or alpha? "\1&HFF&"
+                        return Err(ParserError::UnexpectedChar { actual: c })
                     },
-                    Some(b'a') => Effect::Alpha {
-                        index: Some(n),
-                        value: parse_alpha(reader)?,
+                    None => {
+                        return Err(ParserError::UnexpectedEnd)
                     },
-                    Some(c) => return Err(ParserError::UnexpectedChar { actual: c }),
-                    None => return Err(ParserError::UnexpectedEnd),
                 }
             } else {
                 return Err(ParserError::MissingEffectName);
@@ -1272,20 +1362,39 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     Ok(effect)
 }
 
-fn parse_color(reader: &mut Reader) -> Result<Color, ParserError> {
-    reader.expect(b'&')?;
-    reader.expect(b'H')?;
-    let hex = reader.take_while(|c| c.is_ascii_hexdigit());
-    reader.expect(b'&')?;
-    Ok(parse_hex_color(hex)?)
+fn parse_color(reader: &mut Reader) -> Result<Option<Color>, ParserError> {
+    if reader.try_consume(b"&") {
+        _ = reader.try_consume(b"H");
+        let hex = reader.take_while(|c| c.is_ascii_hexdigit());
+        _ = reader.try_consume(b"&");
+        Ok(Some(parse_hex_color(hex)?))
+    } else {
+        Ok(None)
+    }
 }
 
-fn parse_alpha(reader: &mut Reader) -> Result<u8, ReaderError> {
-    reader.expect(b'&')?;
-    reader.expect(b'H')?;
-    let hex = reader.take_while(|c| c.is_ascii_hexdigit());
-    reader.expect(b'&')?;
-    Ok(parse_hex(hex.try_into().unwrap()).unwrap())
+fn parse_alpha(reader: &mut Reader) -> Result<Alpha, ReaderError> {
+    // reader.dbg();
+    _ = reader.try_consume(b"&");
+    _ = reader.try_consume(b"&");
+    _ = reader.try_consume(b"H");
+    _ = reader.try_consume(b"H");
+    let value = reader.take_while(|c| c.is_ascii_hexdigit());
+    if reader.try_consume(b"%") {
+        // TODO: is this in decimal?
+        return Ok(Alpha::Percent(parse_integer(value)?.try_into().unwrap()));
+    }
+
+    _ = reader.try_consume(b"&");
+    match value {
+        &[b0, b1] => {
+            Ok(Alpha::Byte(parse_hex(&[b0, b1]).unwrap()))
+        }
+        value => {
+            tracing::warn!("invalid alpha value: {:?}", value.as_bstr());
+            Ok(Alpha::Byte(0x00))
+        }
+    }
 }
 
 fn parse_style(s: &[u8]) -> Result<Vec<Effect>, ParserError> {
