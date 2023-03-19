@@ -83,7 +83,7 @@ mod tests {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Event<'s> {
     pub marked: bool,
     pub layer: i32,
@@ -555,7 +555,14 @@ impl<'s> ScriptParser<'s> {
                         None
                     }
                 };
-            } else if let Some(format) = line.strip_prefix(b"Format: ") {
+                continue;
+            }
+
+            if current_section.is_none() {
+                continue;
+            }
+
+            if let Some(format) = line.strip_prefix(b"Format: ") {
                 // Found list of columns provided in lines below.
 
                 let Some(section) = current_section.as_ref() else {
@@ -627,7 +634,7 @@ impl<'s> ScriptParser<'s> {
                     }
                 }
             } else {
-                tracing::trace!("Unsupported line: {}", line.as_bstr());
+                tracing::trace!("Unsupported line: {} in section {:?}", line.as_bstr(), current_section);
             }
         }
 
