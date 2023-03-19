@@ -166,6 +166,25 @@ pub struct ScriptInfo {
     pub video_aspect_ratio: f32,
     pub video_zoom: f32,
     pub scroll_position: f32,
+    pub collisions: Collisions,
+    pub timer: f32,
+}
+
+#[derive(Debug, Default)]
+pub enum Collisions {
+    #[default]
+    Normal,
+}
+
+impl FromStr for Collisions {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Normal" => Ok(Self::Normal),
+            _ => Err(())
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -629,6 +648,8 @@ impl<'s> ScriptParser<'s> {
                     b"Video Aspect Ratio" => script.info.video_aspect_ratio = parse_or_skip!(value),
                     b"Video Zoom" => script.info.video_zoom = parse_or_skip!(value),
                     b"Scroll Position" => script.info.scroll_position = parse_or_skip!(value),
+                    b"Collisions" => script.info.collisions = parse_or_skip!(value),
+                    b"Timer" => script.info.timer = parse_or_skip!(value),
                     _ => {
                         tracing::warn!("Unsupported key for script info: '{}' with value '{}'", name, value.as_bstr())
                     }
