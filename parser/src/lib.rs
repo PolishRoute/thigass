@@ -598,9 +598,9 @@ impl<'s> ScriptParser<'s> {
                     }
                 }
             } else if let Some(x) = line.strip_prefix(b"Dialogue: ") {
-                script.events.push((EventType::Dialogue, self.parse_event(x.as_bstr())));
+                script.events.push((EventType::Dialogue, self.parse_event(x.as_bstr()).unwrap_or_default()));
             } else if let Some(x) = line.strip_prefix(b"Comment: ") {
-                script.events.push((EventType::Comment, self.parse_event(x.as_bstr())));
+                script.events.push((EventType::Comment, self.parse_event(x.as_bstr()).unwrap_or_default()));
             } else if let Some(s) = line.strip_prefix(b"Style: ") {
                 let style = self.parse_style(s.as_bstr());
                 if let Ok(style) = style {
@@ -699,9 +699,16 @@ impl<'s> ScriptParser<'s> {
     }
 
     #[inline(never)]
-    fn parse_event(&mut self, data: &'s BStr) -> Event<'s> {
-        let mapping = self.events_mapping.as_ref().unwrap();
-        let fields: ArrayVec<[_; EventField::LENGTH]> = data.splitn(mapping.columns(), |b| *b == b',').collect();
+    fn parse_event(&mut self, data: &'s BStr) -> Result<Event<'s>, ()> {
+        let Some(mapping) = self.events_mapping.as_ref() else {
+            tracing::warn!("missing mapping for events");
+            return Err(());
+        };
+
+        let fields: ArrayVec<[_; EventField::LENGTH]> = data
+            .splitn(mapping.columns(), |b| *b == b',')
+            .collect();
+
         let event = Event {
             marked: mapping.value(EventField::Marked, &fields),
             layer: mapping.value(EventField::Layer, &fields),
@@ -715,7 +722,7 @@ impl<'s> ScriptParser<'s> {
             effect: mapping.value_of(EventField::Effect, &fields).as_bstr(),
             text: mapping.value_of(EventField::Text, &fields).as_bstr(),
         };
-        event
+        Ok(event)
     }
 }
 
