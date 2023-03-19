@@ -669,7 +669,9 @@ impl<'s> ScriptParser<'s> {
             tracing::warn!("Style without field mapping: {}", s.as_bstr());
             return Err(());
         };
-        let fields: ArrayVec<[_; StyleField::LENGTH]> = s.splitn(mapping.columns(), |b| *b == b',').collect();
+        let fields: ArrayVec<[_; StyleField::LENGTH]> = s.splitn(mapping.columns(), |b| *b == b',')
+            .map(|f| f.trim())
+            .collect();
         let style = Style {
             name: mapping.value(StyleField::Name, &fields),
             font_name: mapping.value(StyleField::FontName, &fields),
@@ -707,6 +709,7 @@ impl<'s> ScriptParser<'s> {
 
         let fields: ArrayVec<[_; EventField::LENGTH]> = data
             .splitn(mapping.columns(), |b| *b == b',')
+            .map(|f| f.trim())
             .collect();
 
         let event = Event {
