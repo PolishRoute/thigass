@@ -1246,6 +1246,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
                     Ok(item) => {
                         items.push(item);
                     }
+                    Err(ParserError::MissingEffectName) => {}
                     Err(e) => {
                         // tracing::warn!("unsupported effect: {:?}", e);
                     }
