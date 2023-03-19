@@ -1047,7 +1047,11 @@ fn parse_draw_commands(reader: &mut Reader) -> Result<Vec<DrawCommand>, ParserEr
 
 pub fn parse_curve(s: &[u8]) -> Result<Vec<DrawCommand>, ParserError> {
     let mut reader = Reader::new(s);
-    parse_draw_commands(&mut reader)
+    let cmds = parse_draw_commands(&mut reader)?;
+    if !reader.is_end() {
+        tracing::debug!("not all parsed as a curve; remaining '{}'", reader.take_remaining().as_bstr());
+    }
+    Ok(cmds)
 }
 
 fn parse_float(s: &[u8]) -> Result<f32, ReaderError> {
