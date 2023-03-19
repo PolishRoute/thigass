@@ -860,18 +860,21 @@ impl<'d> Reader<'d> {
         Ok(s)
     }
 
-    fn read_integer(&mut self) -> Result<u32, ReaderError> {
-        let pos = self.pos;
+    fn try_read_integer(&mut self) -> Option<u32> {
         let digits = self.take_while(|c| c.is_ascii_digit());
         if digits.len() == 0 {
-            return Err(ReaderError::InvalidInt { pos });
+            return None;
         }
 
         let mut n = 0;
         for b in digits.iter().copied() {
             n = n * 10 + u32::from(b - b'0');
         }
-        Ok(n)
+        Some(n)
+    }
+
+    fn read_integer(&mut self) -> Result<u32, ReaderError> {
+        Ok(self.try_read_integer().unwrap_or(0))
     }
 
     fn read_bool(&mut self) -> Result<bool, ReaderError> {
