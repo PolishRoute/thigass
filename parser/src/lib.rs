@@ -60,7 +60,7 @@ impl FromStr for Timestamp {
     type Err = TimestampParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.splitn(3, ':');
+        let mut parts = s.splitn(3, ':').map(str::trim);
         let hours: u64 = parts.next().ok_or_else(|| TimestampParseError::MissingHours)?.parse()?;
         let minutes: u64 = parts.next().ok_or_else(|| TimestampParseError::MissingMinutes)?.parse()?;
         let (seconds, hundredths) = parts.next()
