@@ -839,11 +839,18 @@ impl<'d> Reader<'d> {
         }
     }
 
+    fn try_read_float(&mut self) -> Option<f32> {
+        match fast_float::parse_partial(&self.buf[self.pos..]) {
+            Ok((value, len)) => {
+                self.pos += len;
+                Some(value)
+            }
+            Err(_) => None,
+        }
+    }
+
     fn read_float(&mut self) -> Result<f32, ReaderError> {
-        let (value, len) = fast_float::parse_partial(&self.buf[self.pos..])
-            .map_err(|_| ReaderError::InvalidFloat { pos: self.pos })?;
-        self.pos += len;
-        Ok(value)
+        Ok(self.try_read_float().unwrap_or(0.0))
     }
 
     fn read_str(&mut self) -> Result<&str, ReaderError> {
