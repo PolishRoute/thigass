@@ -358,7 +358,7 @@ fn parse_styles_mapping(s: &BStr) -> FieldMapping<StyleField> {
             b"Bold" => StyleField::Bold,
             b"Italic" => StyleField::Italic,
             b"Underline" => StyleField::Underline,
-            b"StrikeOut" => StyleField::StrikeOut,
+            b"StrikeOut" | b"Strikeout" => StyleField::StrikeOut,
             b"ScaleX" => StyleField::ScaleX,
             b"ScaleY" => StyleField::ScaleY,
             b"Spacing" => StyleField::Spacing,
