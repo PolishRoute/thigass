@@ -451,7 +451,9 @@ trait FromBytes: Sized {
     fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err>;
 }
 
-impl<T: FromStr + Default + fmt::Debug> FromBytes for T where <T as FromStr>::Err: fmt::Debug {
+impl<T: FromStr + Default + fmt::Debug> FromBytes for T
+    where <T as FromStr>::Err: fmt::Debug
+{
     default type Err = <T as FromStr>::Err;
 
     default fn from_bytes(bytes: &[u8]) -> Result<Self, <Self as FromBytes>::Err> {
@@ -459,11 +461,21 @@ impl<T: FromStr + Default + fmt::Debug> FromBytes for T where <T as FromStr>::Er
             Ok(s) => s,
             Err(e) => bytes[..e.valid_up_to()].to_str().unwrap(),
         };
+
         if s.is_empty() {
-            tracing::warn!("cannot parse '{}' as {}. using default: {:?}", s, std::any::type_name::<T>(), &T::default());
+            tracing::warn!("no value for {}. using default: {:?}",
+                    std::any::type_name::<T>(), &T::default());
             return Ok(T::default());
         }
-        Ok(T::from_str(s).map_err(drop).unwrap())
+
+        match T::from_str(s) {
+            Ok(val) => Ok(val),
+            Err(e) => {
+                tracing::warn!("cannot parse '{}' as {} ({:?}). using default: {:?}",
+                    s, std::any::type_name::<T>(), e, &T::default());
+                Ok(T::default())
+            }
+        }
     }
 }
 
