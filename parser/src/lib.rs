@@ -3,13 +3,6 @@
 #![feature(specialization)]
 #![deny(unsafe_code)]
 #![allow(incomplete_features)]
-#![allow(clippy::unnecessary_lazy_evaluations)]
-#![allow(clippy::len_zero)]
-#![allow(clippy::struct_excessive_bools)]
-#![allow(clippy::trivially_copy_pass_by_ref)]
-#![allow(clippy::redundant_closure_for_method_calls)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::too_many_lines)]
 
 use std::fmt;
 use std::num::ParseIntError;
