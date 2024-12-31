@@ -160,7 +160,7 @@ pub struct ScriptInfo {
     pub video_zoom_percent: f32,
     pub active_line: u32,
     pub video_position: u32,
-    pub video_aspect_ratio: f32,
+    pub video_aspect_ratio: AspectRatio,
     pub video_zoom: f32,
     pub scroll_position: f32,
     pub collisions: Collisions,
@@ -510,6 +510,21 @@ impl FromBytes for String {
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err> {
         Ok(bytes.to_str_lossy().into_owned())
+    }
+}
+
+#[derive(Debug, Default)]
+struct AspectRatio(f32);
+
+impl FromBytes for AspectRatio {
+    type Err = fast_float::Error;
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Err> {
+        if let Some(bytes) = bytes.strip_prefix(b"c") {
+            Ok(AspectRatio(fast_float::parse(bytes)?))
+        } else {
+            Ok(AspectRatio(fast_float::parse(bytes)?))
+        }
     }
 }
 
