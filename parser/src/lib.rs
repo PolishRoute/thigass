@@ -801,12 +801,14 @@ impl From<ColorParseError> for ParserError {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub enum Alpha {
     Percent(u8),
     Byte(u8),
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub enum Effect {
     Align(Alignment),
     Blur(f32),
@@ -858,6 +860,7 @@ pub enum Effect {
 }
 
 #[derive(Debug, Default)]
+#[derive(Clone)]
 pub struct Alignment(u8);
 
 impl FromStr for Alignment {
@@ -869,9 +872,11 @@ impl FromStr for Alignment {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct Point(f32, f32);
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub enum DrawCommand {
     Close,
     Move(Point),
@@ -887,7 +892,7 @@ fn read_point(reader: &mut Reader) -> Result<Point, ReaderError> {
     Ok(Point(x, y))
 }
 
-fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, ReaderError> {
+fn parse_args_simple<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, ReaderError> {
     reader.expect(b'(')?;
     let mut args = ArrayVec::new();
     loop {
@@ -903,6 +908,78 @@ fn parse_args<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, Re
             b',' => (),
             b')' => break,
             _ => unreachable!(),
+        }
+    }
+    Ok(args)
+}
+
+#[derive(Debug)]
+enum Arg<'a> {
+    Raw(&'a BStr),
+    Effects(Vec<Effect>),
+    Expr(&'a BStr),
+}
+
+impl Default for Arg<'_> {
+    fn default() -> Self {
+        Self::Raw(b"".into())
+    }
+}
+
+fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 8]>, ParserError> {
+    reader.expect(b'(')?;
+    let mut args = ArrayVec::new();
+    let mut is_end = false;
+    while !is_end {
+        let Some(raw_arg) = reader.take_until_any(|b| matches!(b, b',' | b')' | b'\\' | b'!')) else {
+            return Err(ParserError::ReaderError(ReaderError::UnexpectedEnd));
+        };
+
+        let mut arg = Arg::Raw(raw_arg.as_bstr());
+        match reader.peek() {
+            Some(b',') => {
+                reader.consume().unwrap();
+            },
+            Some(b')') => {
+                reader.consume().unwrap();
+                is_end = true;
+            },
+            Some(b'\\') => {
+                let mut effects = Vec::new();
+                while let Some(byte) = reader.peek() {
+                    match byte {
+                        b'\\' => {
+                            effects.push(parse_effect(reader)?);
+                        }
+                        b')' => {
+                            is_end = true;
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+                arg = Arg::Effects(effects);
+            },
+            Some(b'!') => {
+                reader.consume().unwrap();
+                reader.dbg();
+                let expr = reader.take_until(b'!').unwrap().as_bstr();
+                arg = Arg::Expr(expr);
+            }
+            Some(b'$') => {
+                let expr = reader.take_while(|c| c == b'$' || c.is_ascii_alphanumeric()).as_bstr();
+                arg = Arg::Expr(expr);
+            }
+            Some(other) => {
+                unimplemented!("{}", other as char);
+            }
+            None => {
+                break;
+            }
+        }
+
+        if let Some(arg) = args.try_push(arg) {
+            tracing::warn!("ignoring argument: {:?}", arg);
         }
     }
     Ok(args)
@@ -1023,7 +1100,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"fy" => Effect::Fy(reader.read_float_or_default()?),
         b"fz" => Effect::Fz(reader.read_float_or_default()?),
         b"clip" | b"iclip" => { // TODO: split
-            let args = parse_args(reader)?;
+            let args = parse_args_simple(reader)?;
             match args[..] {
                 [curve] => {
                     let mut reader = Reader::new(curve.as_bytes());
@@ -1045,7 +1122,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             }
         }
         b"pos" => {
-            let args = parse_args(reader)?;
+            let args = parse_args_simple(reader)?;
             match args[..] {
                 [x, y] => Effect::Pos(
                     parse_float(x)?,
@@ -1055,7 +1132,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             }
         }
         b"org" => {
-            let args = parse_args(reader)?;
+            let args = parse_args_simple(reader)?;
             match args[..] {
                 [x, y] => Effect::Org(
                     parse_integer(x)?,
@@ -1071,37 +1148,52 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"shad" => Effect::Shadow(reader.read_float_or_default()?),
         b"shadow" => Effect::Shadow(reader.read_float_or_default()?),
         b"t" => {
-            let args = parse_args(reader)?;
-            match args[..] {
-                [t1, t2, accel, style] => Effect::Transition {
+            let args = parse_args_complex(reader)?;
+            match &args[..] {
+                [Arg::Raw(t1), Arg::Raw(t2), Arg::Raw(accel), Arg::Effects(style)] => Effect::Transition {
                     t1: Some(parse_float(t1)?),
                     t2: Some(parse_float(t2)?),
                     accel: Some(parse_float(accel)?),
-                    style: parse_style(style.as_bytes())?,
+                    style: style.clone(),
                 },
-                [t1, t2, style] => Effect::Transition {
+                [Arg::Raw(t1), Arg::Raw(t2), Arg::Effects(style)] => Effect::Transition {
                     t1: Some(parse_float(t1)?),
                     t2: Some(parse_float(t2)?),
                     accel: None,
-                    style: parse_style(style.as_bytes())?,
+                    style: style.clone(),
                 },
-                [t1, t2] => Effect::Transition {
+                [Arg::Raw(t1), Arg::Raw(t2)] => Effect::Transition {
                     t1: Some(parse_float(t1)?),
                     t2: Some(parse_float(t2)?),
                     accel: None,
                     style: Vec::new(),
                 },
-                [style] => Effect::Transition {
+                [Arg::Raw(t2)] => Effect::Transition {
+                    t1: None,
+                    t2: Some(parse_float(t2)?),
+                    accel: None,
+                    style: Vec::new(),
+                },
+                [Arg::Raw(t2), Arg::Effects(style)] => Effect::Transition {
+                    t1: None,
+                    t2: Some(parse_float(t2)?),
+                    accel: None,
+                    style: style.clone(),
+                },
+                [Arg::Effects(style)] => Effect::Transition {
                     t1: None,
                     t2: None,
                     accel: None,
-                    style: parse_style(style.as_bytes())?,
+                    style: style.clone(),
                 },
-                _ => unsupported_overload(name, &args)?,
+                ref rest  => {
+                    tracing::warn!("Unsupported overload for '{}': {:?}", name.as_bstr(), args);
+                    return Err(ParserError::UnsupportedOverload { args: args.len() });
+                },
             }
         }
         b"fade" | b"fad" => {
-            let args = parse_args(reader)?;
+            let args = parse_args_simple(reader)?;
             match args[..] {
                 [a1, a2, a3, t1, t2, t3, t4] => Effect::Fade {
                     a1: parse_float(a1)?,
@@ -1121,7 +1213,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             }
         }
         b"move" => {
-            let args = parse_args(reader)?;
+            let args = parse_args_simple(reader)?;
             match args[..] {
                 [x1, y1, x2, y2, t1, t2] => Effect::Move {
                     x1: parse_float(x1)?,
@@ -1174,7 +1266,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"s" => Effect::StrikeOut(reader.read_bool_or_default()?),
         name if !name.is_empty() => {
             let args = if reader.peek() == Some(b'(') {
-                parse_args(reader)?
+                parse_args_simple(reader)?
             } else {
                 Default::default()
             };
@@ -1250,11 +1342,6 @@ fn parse_alpha(reader: &mut Reader) -> Result<Alpha, ReaderError> {
             Ok(Alpha::Byte(0x00))
         }
     }
-}
-
-fn parse_style(s: &[u8]) -> Result<Vec<Effect>, ParserError> {
-    let mut reader = Reader::new(s);
-    parse_overrides(&mut reader)
 }
 
 #[inline(never)]
