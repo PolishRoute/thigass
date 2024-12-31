@@ -174,6 +174,7 @@ pub struct ScriptInfo {
 pub enum Collisions {
     #[default]
     Normal,
+    Reverse,
 }
 
 impl FromStr for Collisions {
@@ -182,6 +183,7 @@ impl FromStr for Collisions {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Normal" => Ok(Self::Normal),
+            "Reverse" => Ok(Self::Reverse),
             _ => Err(())
         }
     }
