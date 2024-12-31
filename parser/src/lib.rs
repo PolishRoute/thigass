@@ -141,6 +141,7 @@ enum Section {
     Events,
     ScriptInfo,
     V4Styles,
+    AegisubExtraData,
 }
 
 #[derive(Debug, Default)]
@@ -591,6 +592,7 @@ impl<'s> ScriptParser<'s> {
                     Some(b"Events") => Some(Section::Events),
                     Some(b"Script Info") => Some(Section::ScriptInfo),
                     Some(b"V4+ Styles") => Some(Section::V4Styles),
+                    Some(b"Aegisub Extradata") => Some(Section::AegisubExtraData),
                     Some(other) => {
                         tracing::info!("Ignored section: {}", other.as_bstr());
                         None
@@ -622,6 +624,9 @@ impl<'s> ScriptParser<'s> {
                         // Ignore when in a not supported section
                         continue;
                     }
+                    Section::AegisubExtraData => {
+                        // TODO
+                    },
                 }
             } else if let Some(x) = line.strip_prefix(b"Dialogue: ") {
                 script.events.push((EventType::Dialogue, self.parse_event(x.as_bstr()).unwrap_or_default()));
