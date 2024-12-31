@@ -53,7 +53,7 @@ impl<'buf> Reader<'buf> {
     }
 
     #[must_use]
-    fn take_until(&mut self, term1: u8) -> Option<&'buf [u8]> {
+    pub(crate) fn take_until(&mut self, term1: u8) -> Option<&'buf [u8]> {
         let len = memchr::memchr(term1, &self.buf[self.pos..])?;
         let slice = &self.buf[self.pos..][..len];
         self.pos += len;
@@ -66,6 +66,15 @@ impl<'buf> Reader<'buf> {
         let slice = &self.buf[self.pos..][..len];
         self.pos += len;
         Some(slice)
+    }
+
+    #[must_use]
+    pub(crate) fn take_until_any(&mut self, is_term: impl Fn(u8) -> bool) -> Option<&'buf [u8]> {
+        let raw = self.take_while(|b| !is_term(b));
+        if raw.is_empty() {
+            return None;
+        }
+        Some(raw)
     }
 
     #[must_use]
