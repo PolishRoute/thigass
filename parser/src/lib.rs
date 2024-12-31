@@ -235,7 +235,7 @@ enum StyleField {
     Encoding,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -1123,9 +1123,22 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"yshad" => Effect::YShadow(reader.read_float_or_default()?),
         b"q" => Effect::WrappingStyle(reader.read_integer_or_default()?),
         b"r" => Effect::Reset(None),
-        b"c" => Effect::Color {
-            index: None,
-            color: parse_color(reader)?,
+        b"c" => {
+            let mut colors: ArrayVec<[_; 4]> = ArrayVec::new();
+            while let Some(color) = parse_color(reader)? {
+                colors.push(color);
+            }
+
+            let &[color, ref rest @ ..] = &colors[..] else { unreachable!() };
+            if rest.len() > 0 {
+                // TODO
+                tracing::debug!("remaining colors: {:?}", &colors);
+            }
+
+            Effect::Color {
+                index: None,
+                color: Some(color),
+            }
         },
         b"alpha" => Effect::Alpha {
             index: None,
