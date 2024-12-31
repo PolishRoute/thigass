@@ -4,6 +4,8 @@
 #![deny(unsafe_code)]
 #![allow(incomplete_features)]
 
+mod reader;
+
 use std::fmt;
 use std::num::ParseIntError;
 use std::str::FromStr;
@@ -11,6 +13,8 @@ use std::str::FromStr;
 use bstr::{BStr, ByteSlice};
 use enum_map::{Enum, enum_map, EnumArray, EnumMap};
 use tinyvec::ArrayVec;
+pub use crate::reader::ReaderError;
+use crate::reader::Reader;
 
 #[derive(Default)]
 pub struct Timestamp {
@@ -734,187 +738,10 @@ impl<'s> ScriptParser<'s> {
     }
 }
 
-
 #[derive(Debug)]
 pub enum EventType {
     Dialogue,
     Comment,
-}
-
-struct Reader<'d> {
-    buf: &'d [u8],
-    pos: usize,
-}
-
-impl<'d> Reader<'d> {
-    fn new(s: &'d [u8]) -> Reader<'d> {
-        Reader {
-            buf: s,
-            pos: 0,
-        }
-    }
-
-    #[must_use]
-    fn is_end(&self) -> bool {
-        self.pos == self.buf.len()
-    }
-
-    #[must_use]
-    fn consume(&mut self) -> Option<u8> {
-        let x = self.buf.get(self.pos).copied()?;
-        self.pos += 1;
-        Some(x)
-    }
-
-    #[must_use]
-    fn peek(&self) -> Option<u8> {
-        self.buf.get(self.pos).copied()
-    }
-
-    #[must_use]
-    fn try_consume(&mut self, prefix: &[u8]) -> bool {
-        if self.buf[self.pos..].starts_with(prefix) {
-            self.pos += prefix.len();
-            true
-        } else {
-            false
-        }
-    }
-
-    #[must_use]
-    fn take_while(&mut self, f: impl Fn(u8) -> bool) -> &'d [u8] {
-        let pos = self.pos;
-        while let Some(p) = self.peek() {
-            if !f(p) {
-                break;
-            }
-            self.consume().unwrap();
-        }
-        &self.buf[pos..self.pos]
-    }
-
-    #[must_use]
-    fn take_until(&mut self, term1: u8) -> Option<&'d [u8]> {
-        let len = memchr::memchr(term1, &self.buf[self.pos..])?;
-        let slice = &self.buf[self.pos..][..len];
-        self.pos += len;
-        Some(slice)
-    }
-
-    #[must_use]
-    fn take_until2(&mut self, term1: u8, term2: u8) -> Option<&'d [u8]> {
-        let len = memchr::memchr2(term1, term2, &self.buf[self.pos..])?;
-        let slice = &self.buf[self.pos..][..len];
-        self.pos += len;
-        Some(slice)
-    }
-
-    #[must_use]
-    fn take_remaining(&mut self) -> &'d [u8] {
-        let remaining = &self.buf[self.pos..];
-        self.pos += remaining.len();
-        remaining
-    }
-
-    fn expect_whitespace_or_end(&mut self) -> Result<(), ReaderError> {
-        if self.peek().is_none() {
-            return Ok(());
-        }
-        self.expect_whitespace()
-    }
-
-    fn expect_whitespace(&mut self) -> Result<(), ReaderError> {
-        let ignored = self.take_while(|b| b.is_ascii_whitespace()).len();
-        if ignored > 0 {
-            Ok(())
-        } else {
-            Err(ReaderError::ExpectedWhitespace { pos: self.pos })
-        }
-    }
-
-    fn try_read_float(&mut self) -> Option<f32> {
-        match fast_float::parse_partial(&self.buf[self.pos..]) {
-            Ok((value, len)) => {
-                self.pos += len;
-                Some(value)
-            }
-            Err(_) => None,
-        }
-    }
-
-    fn read_float(&mut self) -> Result<f32, ReaderError> {
-        Ok(self.try_read_float().unwrap_or(0.0))
-    }
-
-    fn read_str(&mut self) -> Result<&str, ReaderError> {
-        let pos = self.pos;
-        let s = self.take_while(|b| !matches!(b, b'\\' | b'{' | b'}'));
-        let s = std::str::from_utf8(s).map_err(|_| ReaderError::InvalidStr { pos })?;
-        Ok(s)
-    }
-
-    fn try_read_integer(&mut self) -> Option<u32> {
-        let digits = self.take_while(|c| c.is_ascii_digit());
-        if digits.len() == 0 {
-            return None;
-        }
-
-        let mut n = 0;
-        for b in digits.iter().copied() {
-            n = n * 10 + u32::from(b - b'0');
-        }
-        Some(n)
-    }
-
-    fn read_integer(&mut self) -> Result<u32, ReaderError> {
-        Ok(self.try_read_integer().unwrap_or(0))
-    }
-
-    #[inline]
-    fn consume_if(&mut self, f: impl FnOnce(u8) -> bool) -> Option<u8> {
-        match self.peek() {
-            Some(x) if f(x) => {
-                self.consume().unwrap();
-                Some(x)
-            },
-            _ => None,
-        }
-    }
-
-    fn read_bool(&mut self) -> Result<bool, ReaderError> {
-        match self.consume_if(|b| matches!(b, b'0' | b'1')) {
-            Some(b'1') => Ok(true),
-            _ => Ok(false),
-        }
-    }
-
-    fn expect(&mut self, b: u8) -> Result<(), ReaderError> {
-        match self.peek() {
-            Some(actual) if actual == b => {
-                self.consume().unwrap();
-                Ok(())
-            }
-            Some(actual) => Err(ReaderError::InvalidChar { pos: self.pos, expected: b, actual }),
-            None => Err(ReaderError::UnexpectedEnd),
-        }
-    }
-
-    #[allow(unused)]
-    #[track_caller]
-    fn dbg(&self) {
-        tracing::debug!("{} @ {:?}", std::panic::Location::caller(), &self.buf[self.pos..].as_bstr());
-    }
-}
-
-#[derive(Debug)]
-pub enum ReaderError {
-    InvalidInt { pos: usize },
-    InvalidFloat { pos: usize },
-    InvalidChar { pos: usize, expected: u8, actual: u8 },
-    InvalidBool { pos: usize },
-    InvalidStr { pos: usize },
-    ExpectedWhitespace { pos: usize },
-    UnexpectedEnd,
 }
 
 #[derive(Debug)]
@@ -1029,9 +856,9 @@ pub enum DrawCommand {
 }
 
 fn read_point(reader: &mut Reader) -> Result<Point, ReaderError> {
-    let x = reader.read_float()?;
+    let x = reader.read_float_or_default()?;
     reader.expect_whitespace()?;
-    let y = reader.read_float()?;
+    let y = reader.read_float_or_default()?;
     reader.expect_whitespace_or_end()?;
     Ok(Point(x, y))
 }
@@ -1112,13 +939,13 @@ pub fn parse_curve(s: &[u8]) -> Result<Vec<DrawCommand>, ParserError> {
 
 fn parse_float(s: &[u8]) -> Result<f32, ReaderError> {
     let mut reader = Reader::new(s);
-    let value = reader.read_float()?;
+    let value = reader.read_float_or_default()?;
     Ok(value)
 }
 
 fn parse_integer(s: &[u8]) -> Result<u32, ReaderError> {
     let mut reader = Reader::new(s);
-    let value = reader.read_integer()?;
+    let value = reader.read_integer_or_default()?;
     Ok(value)
 }
 
@@ -1150,30 +977,30 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"n" => Effect::NewLine { smart_wrapping: false },
         b"N" => Effect::NewLine { smart_wrapping: true },
         b"h" => Effect::Horizontal,
-        b"an" | b"a" => Effect::Align(Alignment(reader.read_integer()?.try_into().unwrap())), // TODO: handle differences?
+        b"an" | b"a" => Effect::Align(Alignment(reader.read_integer_or_default()?.try_into().unwrap())), // TODO: handle differences?
         b"be" => {
             // TODO: can be a float... "\be1.5"
-            Effect::BlurEdges(reader.read_bool()?)
+            Effect::BlurEdges(reader.read_bool_or_default()?)
         },
-        b"blur" => Effect::Blur(reader.read_float()?),
-        b"bord" => Effect::Border(reader.read_float()?),
-        b"xbord" => Effect::XBorder(reader.read_float()?),
-        b"ybord" => Effect::YBorder(reader.read_float()?),
+        b"blur" => Effect::Blur(reader.read_float_or_default()?),
+        b"bord" => Effect::Border(reader.read_float_or_default()?),
+        b"xbord" => Effect::XBorder(reader.read_float_or_default()?),
+        b"ybord" => Effect::YBorder(reader.read_float_or_default()?),
         b"fe" => Effect::FontEncoding,
         b"fn" => Effect::FontName(reader.read_str()?.into()),
-        b"fsc" => Effect::FontScale(reader.read_float()?),
-        b"fscx" => Effect::FontScaleX(reader.read_float()?),
-        b"fscy" => Effect::FontScaleY(reader.read_float()?),
-        b"fsp" => Effect::FontSpacing(reader.read_float()?),
-        b"fs" => Effect::FontSize(reader.read_float()?),
-        b"frx" => Effect::RotateX(reader.read_float()?),
-        b"fry" => Effect::RotateY(reader.read_float()?),
-        b"frz" | b"fr" => Effect::RotateZ(reader.read_float()?),
-        b"fax" => Effect::ShearingX(reader.read_float()?),
-        b"fay" => Effect::ShearingY(reader.read_float()?),
-        b"fx" => Effect::Fx(reader.read_float()?),
-        b"fy" => Effect::Fy(reader.read_float()?),
-        b"fz" => Effect::Fz(reader.read_float()?),
+        b"fsc" => Effect::FontScale(reader.read_float_or_default()?),
+        b"fscx" => Effect::FontScaleX(reader.read_float_or_default()?),
+        b"fscy" => Effect::FontScaleY(reader.read_float_or_default()?),
+        b"fsp" => Effect::FontSpacing(reader.read_float_or_default()?),
+        b"fs" => Effect::FontSize(reader.read_float_or_default()?),
+        b"frx" => Effect::RotateX(reader.read_float_or_default()?),
+        b"fry" => Effect::RotateY(reader.read_float_or_default()?),
+        b"frz" | b"fr" => Effect::RotateZ(reader.read_float_or_default()?),
+        b"fax" => Effect::ShearingX(reader.read_float_or_default()?),
+        b"fay" => Effect::ShearingY(reader.read_float_or_default()?),
+        b"fx" => Effect::Fx(reader.read_float_or_default()?),
+        b"fy" => Effect::Fy(reader.read_float_or_default()?),
+        b"fz" => Effect::Fz(reader.read_float_or_default()?),
         b"clip" | b"iclip" => { // TODO: split
             let args = parse_args(reader)?;
             match args[..] {
@@ -1216,11 +1043,11 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 _ => unsupported_overload(name, &args)?,
             }
         }
-        b"i" => Effect::Italic(reader.read_bool()?),
-        b"p" => Effect::DrawScale(reader.read_float()?),
-        b"pbo" => Effect::BaselineOffset(reader.read_float()?),
-        b"b" => Effect::Bold(reader.read_bool()?),
-        b"shad" => Effect::Shadow(reader.read_float()?),
+        b"i" => Effect::Italic(reader.read_bool_or_default()?),
+        b"p" => Effect::DrawScale(reader.read_float_or_default()?),
+        b"pbo" => Effect::BaselineOffset(reader.read_float_or_default()?),
+        b"b" => Effect::Bold(reader.read_bool_or_default()?),
+        b"shad" => Effect::Shadow(reader.read_float_or_default()?),
         b"t" => {
             let args = parse_args(reader)?;
             match args[..] {
@@ -1293,9 +1120,9 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 _ => unsupported_overload(name, &args)?,
             }
         }
-        b"xshad" => Effect::XShadow(reader.read_float()?),
-        b"yshad" => Effect::YShadow(reader.read_float()?),
-        b"q" => Effect::WrappingStyle(reader.read_integer()?),
+        b"xshad" => Effect::XShadow(reader.read_float_or_default()?),
+        b"yshad" => Effect::YShadow(reader.read_float_or_default()?),
+        b"q" => Effect::WrappingStyle(reader.read_integer_or_default()?),
         b"r" => Effect::Reset(None),
         b"c" => Effect::Color {
             index: None,
@@ -1305,11 +1132,11 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             index: None,
             value: parse_alpha(reader)?,
         },
-        b"k" => Effect::Highlight(reader.read_integer()?),
-        b"kf" | b"K" => Effect::FillUpHighlight(reader.read_integer()?),
-        b"ko" => Effect::OutlineHighlight(reader.read_integer()?),
-        b"u" => Effect::Underline(reader.read_bool()?),
-        b"s" => Effect::StrikeOut(reader.read_bool()?),
+        b"k" => Effect::Highlight(reader.read_integer_or_default()?),
+        b"kf" | b"K" => Effect::FillUpHighlight(reader.read_integer_or_default()?),
+        b"ko" => Effect::OutlineHighlight(reader.read_integer_or_default()?),
+        b"u" => Effect::Underline(reader.read_bool_or_default()?),
+        b"s" => Effect::StrikeOut(reader.read_bool_or_default()?),
         name if !name.is_empty() => {
             let args = if reader.peek() == Some(b'(') {
                 parse_args(reader)?
@@ -1322,7 +1149,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         }
         _ => {
             if let Some(b'0'..=b'9') = reader.peek() {
-                let n = reader.read_integer()?;
+                let n = reader.read_integer_or_default()?;
                 match reader.peek() {
                     Some(b'c') => {
                         reader.consume().unwrap();
