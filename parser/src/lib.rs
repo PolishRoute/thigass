@@ -1064,6 +1064,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"pbo" => Effect::BaselineOffset(reader.read_float_or_default()?),
         b"b" => Effect::Bold(reader.read_bool_or_default()?),
         b"shad" => Effect::Shadow(reader.read_float_or_default()?),
+        b"shadow" => Effect::Shadow(reader.read_float_or_default()?),
         b"t" => {
             let args = parse_args(reader)?;
             match args[..] {
