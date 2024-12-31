@@ -166,6 +166,7 @@ pub struct ScriptInfo {
     pub collisions: Collisions,
     pub timer: f32,
     pub export_encoding: String,
+    pub audio_uri: String,
 }
 
 #[derive(Debug, Default)]
@@ -676,6 +677,7 @@ impl<'s> ScriptParser<'s> {
                     b"Collisions" => script.info.collisions = parse_or_skip!(value),
                     b"Timer" => script.info.timer = parse_or_skip!(value),
                     b"Export Encoding" => script.info.export_encoding = parse_or_skip!(value),
+                    b"Audio URI" => script.info.audio_uri = parse_or_skip!(value),
                     _ => {
                         tracing::warn!("Unsupported key for script info: '{}' with value '{}'", name, value.as_bstr())
                     }
