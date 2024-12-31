@@ -1244,15 +1244,14 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                 colors.push(color);
             }
 
-            let &[color, ref rest @ ..] = &colors[..] else { unreachable!() };
-            if rest.len() > 0 {
+            if colors.len() > 1 {
                 // TODO
-                tracing::debug!("remaining colors: {:?}", &colors);
+                tracing::debug!("remaining colors: {:?}", &colors[1..]);
             }
 
             Effect::Color {
                 index: None,
-                color: Some(color),
+                color: colors.get(0).copied(),
             }
         },
         b"alpha" => Effect::Alpha {
