@@ -1271,7 +1271,10 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
             _ => {
                 let comment = reader.take_until2(b'\\', b'}')
                     .unwrap_or_else(|| reader.take_remaining());
-                tracing::info!("Comment: {}", comment.as_bstr());
+
+                if !comment.starts_with(b"Kara Effector 3.5") {
+                    tracing::warn!("Ignored: {}", comment.as_bstr());
+                }
             }
         }
     }
