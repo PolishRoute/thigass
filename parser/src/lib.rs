@@ -1061,6 +1061,11 @@ fn unsupported_overload(name: impl AsRef<[u8]>, args: &[&BStr]) -> Result<!, Par
     Err(ParserError::UnsupportedOverload { args: args.len() })
 }
 
+fn unsupported_overload_complex(name: impl AsRef<[u8]>, args: &[Arg<'_>]) -> Result<!, ParserError> {
+    tracing::warn!("Unsupported overload for '{}': {:?}", name.as_ref().as_bstr(), args);
+    Err(ParserError::UnsupportedOverload { args: args.len() })
+}
+
 fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     reader.expect(b'\\')?;
 
@@ -1192,10 +1197,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     accel: None,
                     style: style.clone(),
                 },
-                ref rest  => {
-                    tracing::warn!("Unsupported overload for '{}': {:?}", name.as_bstr(), args);
-                    return Err(ParserError::UnsupportedOverload { args: args.len() });
-                },
+                ref rest => unsupported_overload_complex(name, &rest)?,
             }
         }
         b"fade" | b"fad" => {
@@ -1219,9 +1221,9 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             }
         }
         b"move" => {
-            let args = parse_args_simple(reader)?;
+            let args = parse_args_complex(reader)?;
             match args[..] {
-                [x1, y1, x2, y2, t1, t2] => Effect::Move {
+                [Arg::Raw(x1), Arg::Raw(y1), Arg::Raw(x2), Arg::Raw(y2), Arg::Raw(t1), Arg::Raw(t2)] => Effect::Move {
                     x1: parse_float(x1)?,
                     y1: parse_float(y1)?,
                     x2: parse_float(x2)?,
@@ -1229,7 +1231,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     t1: Some(parse_float(t1)?),
                     t2: Some(parse_float(t2)?),
                 },
-                [x1, y1, x2, y2] => Effect::Move {
+                [Arg::Raw(x1), Arg::Raw(y1), Arg::Raw(x2), Arg::Raw(y2)] => Effect::Move {
                     x1: parse_float(x1)?,
                     y1: parse_float(y1)?,
                     x2: parse_float(x2)?,
@@ -1237,7 +1239,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     t1: None,
                     t2: None,
                 },
-                _ => unsupported_overload(name, &args)?,
+                ref rest => unsupported_overload_complex(name, &rest)?,
             }
         }
         b"xshad" => Effect::XShadow(reader.read_float_or_default()?),
