@@ -834,7 +834,7 @@ pub enum Effect {
     Fy(f32),
     Fz(f32),
     Color { index: Option<u32>, color: Option<Color> },
-    Alpha { index: Option<u32>, value: Alpha },
+    Alpha { index: Option<u32>, value: Option<Alpha> },
     Pos(f32, f32),
     DrawScale(f32),
     BaselineOffset(f32),
@@ -1325,7 +1325,7 @@ fn parse_color(reader: &mut Reader) -> Result<Option<Color>, ParserError> {
     }
 }
 
-fn parse_alpha(reader: &mut Reader) -> Result<Alpha, ReaderError> {
+fn parse_alpha(reader: &mut Reader) -> Result<Option<Alpha>, ReaderError> {
     // reader.dbg();
     _ = reader.try_consume(b"&");
     _ = reader.try_consume(b"&");
@@ -1334,17 +1334,16 @@ fn parse_alpha(reader: &mut Reader) -> Result<Alpha, ReaderError> {
     let value = reader.take_while(|c| c.is_ascii_hexdigit());
     if reader.try_consume(b"%") {
         // TODO: is this in decimal?
-        return Ok(Alpha::Percent(parse_integer(value)?.try_into().unwrap()));
+        return Ok(Some(Alpha::Percent(parse_integer(value)?.try_into().unwrap())));
     }
 
     _ = reader.try_consume(b"&");
     match value {
-        &[b0, b1] => {
-            Ok(Alpha::Byte(parse_hex(&[b0, b1]).unwrap()))
-        }
+        &[b0, b1] => Ok(Some(Alpha::Byte(parse_hex(&[b0, b1]).unwrap()))),
+        &[] => Ok(None),
         value => {
-            tracing::warn!("invalid alpha value: {:?}", value.as_bstr());
-            Ok(Alpha::Byte(0x00))
+            // tracing::warn!("invalid alpha value: {:?}", value.as_bstr());
+            Ok(None)
         }
     }
 }
