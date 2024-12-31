@@ -933,7 +933,7 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
     let mut args = ArrayVec::new();
     let mut is_end = false;
     while !is_end {
-        let Some(raw_arg) = reader.take_until_any(|b| matches!(b, b',' | b')' | b'\\' | b'!')) else {
+        let Some(raw_arg) = reader.take_until_any(|b| matches!(b, b',' | b')' | b'\\' | b'!' | b'}')) else {
             return Err(ParserError::ReaderError(ReaderError::UnexpectedEnd));
         };
 
@@ -964,13 +964,17 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
             },
             Some(b'!') => {
                 reader.consume().unwrap();
-                reader.dbg();
                 let expr = reader.take_until(b'!').unwrap().as_bstr();
                 arg = Arg::Expr(expr);
             }
             Some(b'$') => {
                 let expr = reader.take_while(|c| c == b'$' || c.is_ascii_alphanumeric()).as_bstr();
                 arg = Arg::Expr(expr);
+            }
+            Some(b'}') => {
+                // missing ')' but we got '}'
+                tracing::warn!("missing ')' for argument list; using '}}' instead as a terminator");
+                break;
             }
             Some(other) => {
                 unimplemented!("{}", other as char);
