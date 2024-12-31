@@ -1318,7 +1318,7 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
             b'{' => {
                 reader.expect(b'{')?;
                 let effects = parse_overrides(&mut reader)?;
-                reader.expect(b'}')?;
+                reader.expect_or_end(b'}')?;
                 if !effects.is_empty() {
                     parts.push(Part::Overrides(effects));
                 }

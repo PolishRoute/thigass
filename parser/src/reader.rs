@@ -149,14 +149,22 @@ impl<'buf> Reader<'buf> {
         }
     }
 
-    pub(crate) fn expect(&mut self, byte: u8) -> Result<(), ReaderError> {
+    pub(crate) fn expect_or_end(&mut self, byte: u8) -> Result<bool, ReaderError> {
         match self.peek() {
             Some(actual) if actual == byte => {
                 self.consume().unwrap();
-                Ok(())
+                Ok(true)
             }
             Some(actual) => Err(ReaderError::InvalidChar { pos: self.pos, expected: byte, actual }),
-            None => Err(ReaderError::UnexpectedEnd),
+            None => Ok(false),
+        }
+    }
+
+    pub(crate) fn expect(&mut self, byte: u8) -> Result<(), ReaderError> {
+        if self.expect_or_end(byte)? {
+            Ok(())
+        } else {
+            Err(ReaderError::UnexpectedEnd)
         }
     }
 
