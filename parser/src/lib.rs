@@ -165,6 +165,7 @@ pub struct ScriptInfo {
     pub scroll_position: f32,
     pub collisions: Collisions,
     pub timer: f32,
+    pub export_encoding: String,
 }
 
 #[derive(Debug, Default)]
@@ -659,6 +660,7 @@ impl<'s> ScriptParser<'s> {
                     b"Scroll Position" => script.info.scroll_position = parse_or_skip!(value),
                     b"Collisions" => script.info.collisions = parse_or_skip!(value),
                     b"Timer" => script.info.timer = parse_or_skip!(value),
+                    b"Export Encoding" => script.info.export_encoding = parse_or_skip!(value),
                     _ => {
                         tracing::warn!("Unsupported key for script info: '{}' with value '{}'", name, value.as_bstr())
                     }
