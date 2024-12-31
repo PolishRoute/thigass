@@ -786,7 +786,7 @@ pub enum Alpha {
 pub enum Effect {
     Align(Alignment),
     Blur(f32),
-    BlurEdges(bool),
+    BlurEdges(f32),
     Border(f32),
     XBorder(f32),
     YBorder(f32),
@@ -978,10 +978,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"N" => Effect::NewLine { smart_wrapping: true },
         b"h" => Effect::Horizontal,
         b"an" | b"a" => Effect::Align(Alignment(reader.read_integer_or_default()?.try_into().unwrap())), // TODO: handle differences?
-        b"be" => {
-            // TODO: can be a float... "\be1.5"
-            Effect::BlurEdges(reader.read_bool_or_default()?)
-        },
+        b"be" => Effect::BlurEdges(reader.read_float_or_default()?),
         b"blur" => Effect::Blur(reader.read_float_or_default()?),
         b"bord" => Effect::Border(reader.read_float_or_default()?),
         b"xbord" => Effect::XBorder(reader.read_float_or_default()?),
