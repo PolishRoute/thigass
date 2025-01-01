@@ -1132,7 +1132,16 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
     reader.expect(b'\\')?;
 
     // Handle effects with jointed string argument, eg. \fnFontName
-    const WITH_STR_ARGS: [&[u8]; 7] = [b"fn", b"n", b"N", b"alpha", b"r", b"clip", b"c"];
+    const WITH_STR_ARGS: [&[u8]; 8] = [
+        b"fn",
+        b"n",
+        b"N",
+        b"alpha",
+        b"rnd",
+        b"r",
+        b"clip",
+        b"c",
+    ];
 
     let mut name = None;
     for prefix in WITH_STR_ARGS {
@@ -1311,6 +1320,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"yshad" => Effect::YShadow(reader.read_float_or_default()?),
         b"q" => Effect::WrappingStyle(reader.read_integer_or_default()?),
         b"r" => Effect::Reset(None),
+        b"rnd" => Effect::Rnd(reader.read_integer_or_default()?),
         b"c" => {
             let mut colors: ArrayVec<[_; 4]> = ArrayVec::new();
             while let Some(color) = parse_color(reader)? {
@@ -1611,6 +1621,17 @@ mod tests {
                 },
             ]),
             Part::Text(b"Now, count up your sins".as_bstr()),
+        ]);
+    }
+
+    #[test]
+    fn override_with_common_prefix() {
+        let parsed = parse(br"{\r\rnd123}").unwrap();
+        assert_eq!(&parsed[..], &[
+            Part::Overrides(vec![
+                Effect::Reset(None),
+                Effect::Rnd(123),
+            ]),
         ]);
     }
 }
