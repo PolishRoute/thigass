@@ -1489,11 +1489,16 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
             b'}' => {
                 break;
             }
+            b'=' => {
+                reader.expect(b'=')?;
+                let _val = reader.read_integer_or_default()?;
+                // TODO: figure out what this even means
+            }
             _ => {
                 let comment = reader.take_until2(b'\\', b'}')
                     .unwrap_or_else(|| reader.take_remaining());
 
-                if !comment.starts_with(b"Kara Effector 3.5") {
+                if !comment.starts_with(b"Kara Effector 3.5") && comment != b"*" {
                     tracing::warn!("Ignored: {}", comment.as_bstr());
                 }
             }
@@ -1686,6 +1691,20 @@ mod tests {
                 Effect::Reset(None),
                 Effect::Rnd(123),
             ]),
+        ]);
+    }
+
+    #[test]
+    fn stray_closing_paren() {
+        let parsed = parse(br"{\pos(1122.29,189.87)\3c&H5DC4EC&}by an \NElite").unwrap();
+        assert_eq!(&parsed[..], &[
+            Part::Overrides(vec![
+                Effect::Pos(1122.29, 189.87),
+                Effect::Color { index: Some(3), color: Some(Color { r: 236, g: 196, b: 93, a: 0 }) }
+            ]),
+            Part::Text(b"by an ".as_bstr()),
+            Part::NewLine { smart_wrapping: true },
+            Part::Text(b"Elite".as_bstr()),
         ]);
     }
 }
