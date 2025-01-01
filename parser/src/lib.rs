@@ -71,16 +71,6 @@ impl FromStr for Timestamp {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::Timestamp;
-
-    #[test]
-    fn foo() {
-        assert_eq!(format!("{:?}", "0:13:57.35".parse::<Timestamp>().unwrap()), "0:13:57.35");
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct Event<'s> {
     pub marked: bool,
@@ -1517,9 +1507,14 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
 }
 
 #[cfg(test)]
-mod tests2 {
+mod tests {
     use bstr::ByteSlice;
-    use crate::{parse, Alignment, Color, DrawCommand, Effect, Part, Point};
+    use crate::{parse, Alignment, Color, DrawCommand, Effect, Part, Point, Timestamp};
+
+    #[test]
+    fn parse_timestamp() {
+        assert_eq!(format!("{:?}", "0:13:57.35".parse::<Timestamp>().unwrap()), "0:13:57.35");
+    }
 
     #[test]
     fn simple_parse() {
@@ -1602,6 +1597,20 @@ mod tests2 {
                 Effect::Pos(355.0, 484.0),
             ]),
             Part::Text(b"Terminal Colony Number 8 - Shirahime".as_bstr()),
+        ]);
+    }
+
+    #[test]
+    fn unexpected_escape_sequence() {
+        let parsed = parse(br"{\fad(250,250\)}Now, count up your sins").unwrap();
+        assert_eq!(&parsed[..], &[
+            Part::Overrides(vec![
+                Effect::FadeAlpha {
+                    t1: 250.0,
+                    t2: 250.0,
+                },
+            ]),
+            Part::Text(b"Now, count up your sins".as_bstr()),
         ]);
     }
 }
