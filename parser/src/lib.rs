@@ -1185,6 +1185,9 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"clip" | b"iclip" => { // TODO: split
             let args = parse_args_simple(reader)?;
             match args[..] {
+                [] => {
+                    Effect::Clip { mask: vec![], scale: 1.0 }
+                }
                 [curve] => {
                     let mut reader = Reader::new(curve.as_bytes());
                     let cmds = parse_draw_commands(&mut reader)?;
