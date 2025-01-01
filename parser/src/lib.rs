@@ -1438,6 +1438,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
 }
 
 fn parse_color(reader: &mut Reader) -> Result<Option<Color>, ParserError> {
+    _ = reader.try_consume(b"H");
     if reader.try_consume(b"&") {
         _ = reader.try_consume(b"H");
         let hex = reader.take_while(|c| c.is_ascii_hexdigit());
@@ -1705,6 +1706,16 @@ mod tests {
             Part::Text(b"by an ".as_bstr()),
             Part::NewLine { smart_wrapping: true },
             Part::Text(b"Elite".as_bstr()),
+        ]);
+    }
+
+    #[test]
+    fn colors() {
+        let parsed = parse(br"{\1cH&H2A4F5D}").unwrap();
+        assert_eq!(&parsed[..], &[
+            Part::Overrides(vec![
+                Effect::Color { index: Some(1), color: Some(Color { r: 93, g: 79, b: 42, a: 0 }) }
+            ]),
         ]);
     }
 }
