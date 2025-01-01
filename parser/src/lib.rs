@@ -1,6 +1,7 @@
 #![feature(never_type)]
 #![feature(slice_as_chunks)]
 #![feature(specialization)]
+#![feature(slice_split_once)]
 #![deny(unsafe_code)]
 #![allow(incomplete_features)]
 
@@ -433,6 +434,18 @@ impl<T: EnumArray<usize>> FieldMapping<T> {
         where T: Copy + fmt::Debug
     {
         let value = self.value_of(field, values);
+        let value = match value.split_once(|sep| *sep == b'=') {
+            Some((first, second)) => {
+                // TODO: avoid alloc
+                if first == format!("{:?}", field).as_bytes() {
+                    second
+                } else {
+                    value
+                }
+            }
+            None => value,
+        };
+
         match U::from_bytes(value) {
             Ok(value) => value,
             Err(err) => {
