@@ -928,19 +928,21 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
     let mut args = ArrayVec::new();
     let mut is_end = false;
     while !is_end {
-        let Some(raw_arg) = reader.take_until_any(|b| matches!(b, b',' | b')' | b'\\' | b'!' | b'}')) else {
-            return Err(ParserError::ReaderError(ReaderError::UnexpectedEnd));
-        };
-
-        let mut arg = Arg::Raw(raw_arg.as_bstr());
-        match reader.peek() {
+        let arg = match reader.peek() {
             Some(b',') => {
                 reader.consume().unwrap();
+                continue;
             },
             Some(b')') => {
                 reader.consume().unwrap();
                 is_end = true;
+                continue;
             },
+            Some(b'}') => {
+                // missing ')' but we got '}'
+                tracing::warn!("missing ')' for argument list; using '}}' instead as a terminator");
+                break;
+            }
             Some(b'\\') => {
                 let mut effects = Vec::new();
                 while let Some(byte) = reader.peek() {
@@ -955,29 +957,25 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
                         _ => break,
                     }
                 }
-                arg = Arg::Effects(effects);
+                Arg::Effects(effects)
             },
             Some(b'!') => {
                 reader.consume().unwrap();
                 let expr = reader.take_until(b'!').unwrap().as_bstr();
-                arg = Arg::Expr(expr);
+                Arg::Expr(expr)
             }
             Some(b'$') => {
                 let expr = reader.take_while(|c| c == b'$' || c.is_ascii_alphanumeric()).as_bstr();
-                arg = Arg::Expr(expr);
+                Arg::Expr(expr)
             }
-            Some(b'}') => {
-                // missing ')' but we got '}'
-                tracing::warn!("missing ')' for argument list; using '}}' instead as a terminator");
-                break;
+            Some(_) => {
+                let Some(raw_arg) = reader.take_until_any(|b| matches!(b, b',' | b')' | b'\\' | b'!' | b'}')) else {
+                    return Err(ParserError::ReaderError(ReaderError::UnexpectedEnd));
+                };
+                Arg::Raw(raw_arg.as_bstr())
             }
-            Some(other) => {
-                unimplemented!("{}", other as char);
-            }
-            None => {
-                break;
-            }
-        }
+            None => break,
+        };
 
         if let Some(arg) = args.try_push(arg) {
             tracing::warn!("ignoring argument: {:?}", arg);
@@ -1488,6 +1486,23 @@ mod tests2 {
                 Effect::Blur(1.0)
             ]),
             Part::Text(b"m 1859.05 -127.72 b 1859.79 -128.1 1860.54 -128.48 1861.29 -128.86 1861.64 -128.83 1862 -128.79 1862.36 -128.74 1862.69 -128.38 1863.01 -128.02 1863.34 -127.66 1862.92 -127.2 1862.51 -126.74 1862.09 -126.28 1861.08 -126.76 1860.06 -127.24 1859.05 -127.72".as_bstr())
+        ]);
+    }
+
+    #[test]
+    fn transition_with_overrides() {
+        let parsed = parse(br"{\t(540,540,\blur0.9)}").unwrap();
+        assert_eq!(&parsed[..], &[
+            Part::Overrides(vec![
+                Effect::Transition {
+                    t1: Some(540.0),
+                    t2: Some(540.0),
+                    accel: None,
+                    style: vec![
+                        Effect::Blur(0.9),
+                    ],
+                },
+            ]),
         ]);
     }
 }
