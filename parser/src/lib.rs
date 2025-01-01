@@ -976,11 +976,11 @@ fn parse_args_simple<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 
     loop {
         let arg = match reader.peek() {
             Some(b',') => {
-                reader.consume().unwrap();
+                reader.expect(b',')?;
                 continue;
             },
             Some(b')') => {
-                reader.consume().unwrap();
+                reader.expect(b')')?;
                 break;
             },
             Some(b'}') => {
@@ -1029,7 +1029,7 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
                 continue;
             },
             Some(b')') => {
-                reader.consume().unwrap();
+                reader.expect(b')')?;
                 is_end = true;
                 continue;
             },
@@ -1046,6 +1046,7 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
                             effects.push(parse_effect(reader)?);
                         }
                         b')' => {
+                            reader.expect(b')')?;
                             is_end = true;
                             break;
                         }
@@ -1055,7 +1056,7 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
                 Arg::Effects(effects)
             },
             Some(b'!') => {
-                reader.consume().unwrap();
+                reader.expect(b'!')?;
                 let expr = reader.take_until_any(|byte| matches!(byte, b'!' | b'}')).unwrap().as_bstr();
                 reader.expect(b'!')?;
                 Arg::Expr(expr)
