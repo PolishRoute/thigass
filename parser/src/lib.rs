@@ -109,6 +109,7 @@ enum EventField {
     MarginV,
     Effect,
     Text,
+    Actor,
 }
 
 fn parse_events_mapping(config: &BStr) -> FieldMapping<EventField> {
@@ -126,6 +127,7 @@ fn parse_events_mapping(config: &BStr) -> FieldMapping<EventField> {
             b"MarginV" => EventField::MarginV,
             b"Effect" => EventField::Effect,
             b"Text" => EventField::Text,
+            b"Actor" => EventField::Actor,
             _ => {
                 mapping.set(idx, None);
                 tracing::warn!("Unsupported field for events: {}", field.as_bstr());
@@ -143,6 +145,7 @@ enum Section {
     ScriptInfo,
     V4Styles,
     AegisubExtraData,
+    Fonts,
 }
 
 #[derive(Debug, Default)]
@@ -169,6 +172,27 @@ pub struct ScriptInfo {
     pub timer: f32,
     pub export_encoding: String,
     pub audio_uri: String,
+    pub keyframes_file: String,
+    pub play_depth: u32,
+    pub original_script: String,
+    pub original_editing: String,
+    pub original_timing: String,
+    pub timing: String,
+    pub script_updated_by: String,
+    pub video_colorspace: Colorspace,
+    pub synch_point: String,
+    pub update_details: String,
+}
+
+#[derive(Debug, Default)]
+struct Colorspace(String);
+
+impl FromStr for Colorspace {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+       Ok(Colorspace(s.to_string()))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -550,6 +574,16 @@ pub struct Script<'s> {
     pub info: ScriptInfo,
     pub styles: Vec<Style>,
     pub events: Vec<(EventType, Event<'s>)>,
+    pub aegisub: AegisubData,
+}
+
+#[derive(Debug, Default)]
+struct AegisubData {
+    scroll_position: u32,
+    active_line: u32,
+    video_zoom_percent: f32,
+    video_aspect_ratio: AspectRatio,
+    video_position: u32,
 }
 
 impl<'s> ScriptParser<'s> {
@@ -596,6 +630,7 @@ impl<'s> ScriptParser<'s> {
             styles: Vec::new(),
             events: Vec::new(),
             info: ScriptInfo::default(),
+            aegisub: AegisubData::default(),
         };
 
         let mut current_section = None;
@@ -608,12 +643,14 @@ impl<'s> ScriptParser<'s> {
                     Some(b"Script Info") => Some(Section::ScriptInfo),
                     Some(b"V4+ Styles") => Some(Section::V4Styles),
                     Some(b"Aegisub Extradata") => Some(Section::AegisubExtraData),
+                    Some(b"Fonts") => Some(Section::Fonts),
+                    Some(b"Aegisub Project Garbage") => None,
                     Some(other) => {
                         tracing::info!("Ignored section: {}", other.as_bstr());
                         None
                     }
                     None => {
-                        tracing::warn!("Empty section");
+                        tracing::warn!("Empty section {}", section.as_bstr());
                         None
                     }
                 };
@@ -642,6 +679,7 @@ impl<'s> ScriptParser<'s> {
                     Section::AegisubExtraData => {
                         // TODO
                     },
+                    Section::Fonts => unimplemented!(),
                 }
             } else if let Some(x) = line.strip_prefix(b"Dialogue: ") {
                 script.events.push((EventType::Dialogue, self.parse_event(x.as_bstr()).unwrap_or_default()));
@@ -698,6 +736,21 @@ impl<'s> ScriptParser<'s> {
                     b"Timer" => script.info.timer = parse_or_skip!(value),
                     b"Export Encoding" => script.info.export_encoding = parse_or_skip!(value),
                     b"Audio URI" => script.info.audio_uri = parse_or_skip!(value),
+                    b"Aegisub Scroll Position" => script.aegisub.scroll_position = parse_or_skip!(value),
+                    b"Aegisub Active Line" => script.aegisub.active_line = parse_or_skip!(value),
+                    b"Aegisub Video Zoom Percent" => script.aegisub.video_zoom_percent = parse_or_skip!(value),
+                    b"Aegisub Video Aspect Ratio" => script.aegisub.video_aspect_ratio = parse_or_skip!(value),
+                    b"Aegisub Video Position" => script.aegisub.video_position = parse_or_skip!(value),
+                    b"Keyframes File" => script.info.keyframes_file = parse_or_skip!(value),
+                    b"PlayDepth" => script.info.play_depth = parse_or_skip!(value),
+                    b"Original Script" => script.info.original_script = parse_or_skip!(value),
+                    b"Original Editing" => script.info.original_editing = parse_or_skip!(value),
+                    b"Original Timing" => script.info.original_timing = parse_or_skip!(value),
+                    b"Timing" => script.info.timing = parse_or_skip!(value),
+                    b"Script Updated By" => script.info.script_updated_by = parse_or_skip!(value),
+                    b"Video Colorspace" => script.info.video_colorspace = parse_or_skip!(value),
+                    b"Synch Point" => script.info.synch_point = parse_or_skip!(value),
+                    b"Update Details" => script.info.update_details = parse_or_skip!(value),
                     _ => {
                         tracing::warn!("Unsupported key for script info: '{}' with value '{}'", name, value.as_bstr())
                     }
