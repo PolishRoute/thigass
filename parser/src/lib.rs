@@ -239,7 +239,7 @@ enum StyleField {
     Encoding,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -802,15 +802,13 @@ impl From<ColorParseError> for ParserError {
     }
 }
 
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Alpha {
     Percent(u8),
     Byte(u8),
 }
 
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     Align(Alignment),
     Blur(f32),
@@ -861,8 +859,7 @@ pub enum Effect {
     OutlineHighlight(u32),
 }
 
-#[derive(Debug, Default)]
-#[derive(Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Alignment(u8);
 
 impl FromStr for Alignment {
@@ -873,12 +870,10 @@ impl FromStr for Alignment {
     }
 }
 
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Point(f32, f32);
 
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DrawCommand {
     Close,
     Move(Point),
@@ -1383,6 +1378,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
     Ok(items)
 }
 
+#[derive(PartialEq)]
 #[derive(Debug)]
 pub enum Part<'s> {
     Text(&'s BStr),
@@ -1442,11 +1438,56 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
 
 #[cfg(test)]
 mod tests2 {
-    use crate::parse;
+    use bstr::ByteSlice;
+    use crate::{parse, Alignment, Color, DrawCommand, Effect, Part, Point};
 
     #[test]
     fn simple_parse() {
-        dbg!(parse(br"{\fs16}This is small text. {\fs28}This is\n large text").unwrap());
-        dbg!(parse(br"{\an7\blur4\fscx50\frz14.5\fax0.27\c&H303587&\pos(118.73,1232.33)\p1\fscy50\clip(m 549 1080 l 422 876 759 791 980 735 b 1028 724 1054 712 1059 696 l 1281 1080)\t(1740,2140,1,\blur1)}m 1859.05 -127.72 b 1859.79 -128.1 1860.54 -128.48 1861.29 -128.86 1861.64 -128.83 1862 -128.79 1862.36 -128.74 1862.69 -128.38 1863.01 -128.02 1863.34 -127.66 1862.92 -127.2 1862.51 -126.74 1862.09 -126.28 1861.08 -126.76 1860.06 -127.24 1859.05 -127.72"));
+        let parsed = parse(br"{\fs16}This is small text. {\fs28}This is\n large text").unwrap();
+        assert_eq!(&parsed[..], &[
+            Part::Overrides(vec![
+                Effect::FontSize(16.0),
+            ]),
+            Part::Text(b"This is small text. ".as_bstr()),
+            Part::Overrides(vec![
+                Effect::FontSize(28.0),
+            ]),
+            Part::Text(b"This is".as_bstr()),
+            Part::NewLine { smart_wrapping: false },
+            Part::Text(b" large text".as_bstr()),
+        ]);
+    }
+
+    #[test]
+    fn more_complex() {
+        let parsed = parse(br"{\an7\blur4\fscx50\frz14.5\fax0.27\c&H303587&\pos(118.73,1232.33)\p1\fscy50\clip(m 549 1080 l 422 876 759 791 980 735 b 1028 724 1054 712 1059 696 l 1281 1080)\t(1740,2140,1,\blur1)}m 1859.05 -127.72 b 1859.79 -128.1 1860.54 -128.48 1861.29 -128.86 1861.64 -128.83 1862 -128.79 1862.36 -128.74 1862.69 -128.38 1863.01 -128.02 1863.34 -127.66 1862.92 -127.2 1862.51 -126.74 1862.09 -126.28 1861.08 -126.76 1860.06 -127.24 1859.05 -127.72").unwrap();
+        assert_eq!(&parsed[..], &[
+            Part::Overrides(vec![
+                Effect::Align(Alignment(7)),
+                Effect::Blur(4.0),
+                Effect::FontScaleX(50.0),
+                Effect::RotateZ(14.5),
+                Effect::ShearingX(0.27),
+                Effect::Color { index: None, color: Some(Color { r: 135, g: 53, b: 48, a: 0 }) },
+                Effect::Pos(118.73, 1232.33),
+                Effect::DrawScale(1.0),
+                Effect::FontScaleY(50.0),
+                Effect::Clip { mask: vec![
+                    DrawCommand::Close,
+                    DrawCommand::Move(Point(549.0, 1080.0)),
+                    DrawCommand::Line(Point(422.0, 876.0)),
+                    DrawCommand::Line(Point(759.0, 791.0)),
+                    DrawCommand::Line(Point(980.0, 735.0)),
+                    DrawCommand::Bezier([
+                        Point(1028.0, 724.0),
+                        Point(1054.0, 712.0),
+                        Point(1059.0, 696.0),
+                    ]),
+                    DrawCommand::Line(Point(1281.0, 1080.0)),
+                ], scale: 1.0 },
+                Effect::Blur(1.0)
+            ]),
+            Part::Text(b"m 1859.05 -127.72 b 1859.79 -128.1 1860.54 -128.48 1861.29 -128.86 1861.64 -128.83 1862 -128.79 1862.36 -128.74 1862.69 -128.38 1863.01 -128.02 1863.34 -127.66 1862.92 -127.2 1862.51 -126.74 1862.09 -126.28 1861.08 -126.76 1860.06 -127.24 1859.05 -127.72".as_bstr())
+        ]);
     }
 }
