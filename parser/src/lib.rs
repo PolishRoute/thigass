@@ -959,18 +959,31 @@ fn parse_args_simple<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 
     reader.expect(b'(')?;
     let mut args = ArrayVec::new();
     loop {
-        let Some(arg) = reader.take_until2(b',', b')') else {
-            return Err(ReaderError::UnexpectedEnd);
+        let arg = match reader.peek() {
+            Some(b',') => {
+                reader.consume().unwrap();
+                continue;
+            },
+            Some(b')') => {
+                reader.consume().unwrap();
+                break;
+            },
+            Some(b'}') => {
+                // missing ')' but we got '}'
+                tracing::warn!("missing ')' for argument list; using '}}' instead as a terminator");
+                break;
+            }
+            Some(_) => {
+                let Some(raw_arg) = reader.take_until_any(|b| matches!(b, b',' | b')' | b'}')) else {
+                    return Err(ReaderError::UnexpectedEnd);
+                };
+                raw_arg.as_bstr()
+            }
+            None => break,
         };
 
-        if args.try_push(arg.as_bstr()).is_some() {
-            tracing::warn!("ignoring argument: {}", arg.as_bstr());
-        }
-
-        match reader.consume().expect("not at the end") {
-            b',' => (),
-            b')' => break,
-            _ => unreachable!(),
+        if let Some(arg) = args.try_push(arg) {
+            tracing::warn!("ignoring argument: {:?}", arg);
         }
     }
     Ok(args)
@@ -1569,6 +1582,23 @@ mod tests2 {
                     ],
                 },
             ]),
+        ]);
+    }
+
+    #[test]
+    fn unterminated_simple_args() {
+        let parsed = parse(br"{\fad(200,200}{\pos(355,484)}Terminal Colony Number 8 - Shirahime").unwrap();
+        assert_eq!(&parsed[..], &[
+            Part::Overrides(vec![
+                Effect::FadeAlpha {
+                    t1: 200.0,
+                    t2: 200.0,
+                },
+            ]),
+            Part::Overrides(vec![
+                Effect::Pos(355.0, 484.0),
+            ]),
+            Part::Text(b"Terminal Colony Number 8 - Shirahime".as_bstr()),
         ]);
     }
 }
