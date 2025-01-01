@@ -159,7 +159,7 @@ pub struct ScriptInfo {
     pub video_zoom: f32,
     pub scroll_position: f32,
     pub collisions: Collisions,
-    pub timer: f32,
+    pub timer: String,
     pub export_encoding: String,
     pub audio_uri: String,
     pub keyframes_file: String,
@@ -172,16 +172,26 @@ pub struct ScriptInfo {
     pub video_colorspace: Colorspace,
     pub synch_point: String,
     pub update_details: String,
+    pub gradient_factory: String,
+    pub export_filters: String,
 }
 
 #[derive(Debug, Default)]
-struct Colorspace(String);
+pub enum Colorspace {
+    #[default]
+    Bt601,
+    Bt709,
+}
 
 impl FromStr for Colorspace {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-       Ok(Colorspace(s.to_string()))
+        Ok(match s {
+            "BT.601" => Self::Bt601,
+            "BT.709" => Self::Bt709,
+            _ => unimplemented!("{}", s),
+        })
     }
 }
 
@@ -485,6 +495,7 @@ impl<T: FromStr + Default + fmt::Debug> FromBytes for T
 {
     default type Err = <T as FromStr>::Err;
 
+    #[track_caller]
     default fn from_bytes(bytes: &[u8]) -> Result<Self, <Self as FromBytes>::Err> {
         let s = match bytes.to_str() {
             Ok(s) => s,
@@ -500,8 +511,8 @@ impl<T: FromStr + Default + fmt::Debug> FromBytes for T
         match T::from_str(s) {
             Ok(val) => Ok(val),
             Err(e) => {
-                tracing::warn!("cannot parse '{}' as {} ({:?}). using default: {:?}",
-                    s, std::any::type_name::<T>(), e, &T::default());
+                tracing::warn!("cannot parse '{}' as {} at {:?} ({:?}). using default: {:?}",
+                    s, std::any::type_name::<T>(), std::panic::Location::caller(), e, &T::default());
                 Ok(T::default())
             }
         }
@@ -545,7 +556,7 @@ impl FromBytes for String {
 }
 
 #[derive(Debug, Default)]
-struct AspectRatio(f32);
+pub struct AspectRatio(pub f32);
 
 impl FromBytes for AspectRatio {
     type Err = fast_float::Error;
@@ -568,12 +579,12 @@ pub struct Script<'s> {
 }
 
 #[derive(Debug, Default)]
-struct AegisubData {
-    scroll_position: u32,
-    active_line: u32,
-    video_zoom_percent: f32,
-    video_aspect_ratio: AspectRatio,
-    video_position: u32,
+pub struct AegisubData {
+    pub scroll_position: u32,
+    pub active_line: u32,
+    pub video_zoom_percent: f32,
+    pub video_aspect_ratio: AspectRatio,
+    pub video_position: u32,
 }
 
 impl<'s> ScriptParser<'s> {
@@ -741,6 +752,8 @@ impl<'s> ScriptParser<'s> {
                     b"Video Colorspace" => script.info.video_colorspace = parse_or_skip!(value),
                     b"Synch Point" => script.info.synch_point = parse_or_skip!(value),
                     b"Update Details" => script.info.update_details = parse_or_skip!(value),
+                    b"GradientFactory" => script.info.gradient_factory = parse_or_skip!(value),
+                    b"Export filters" => script.info.export_filters = parse_or_skip!(value),
                     _ => {
                         tracing::warn!("Unsupported key for script info: '{}' with value '{}'", name, value.as_bstr())
                     }
@@ -913,6 +926,18 @@ pub enum Effect {
     Highlight(u32),
     FillUpHighlight(u32),
     OutlineHighlight(u32),
+    Yash(f32),
+    Fsvp(f32),
+    F,
+    Frs(f32),
+    Blir(f32),
+    RemaShit(),
+    Ffrz(f32),
+    Fxcy(f32),
+    Ord(f32),
+    I(bool),
+    Fcxy(f32),
+    Rnd(u32),
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -983,6 +1008,7 @@ fn parse_args_simple<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 
 enum Arg<'a> {
     Raw(&'a BStr),
     Effects(Vec<Effect>),
+    #[allow(dead_code)]
     Expr(&'a BStr),
 }
 
@@ -1030,7 +1056,8 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
             },
             Some(b'!') => {
                 reader.consume().unwrap();
-                let expr = reader.take_until(b'!').unwrap().as_bstr();
+                let expr = reader.take_until_any(|byte| matches!(byte, b'!' | b'}')).unwrap().as_bstr();
+                reader.expect(b'!')?;
                 Arg::Expr(expr)
             }
             Some(b'$') => {
@@ -1163,9 +1190,11 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"an" | b"a" => Effect::Align(Alignment(reader.read_integer_or_default()?.try_into().unwrap())), // TODO: handle differences?
         b"be" => Effect::BlurEdges(reader.read_float_or_default()?),
         b"blur" => Effect::Blur(reader.read_float_or_default()?),
+        b"blir" => Effect::Blir(reader.read_float_or_default()?),
         b"bord" => Effect::Border(reader.read_float_or_default()?),
         b"xbord" => Effect::XBorder(reader.read_float_or_default()?),
         b"ybord" => Effect::YBorder(reader.read_float_or_default()?),
+        b"f" => Effect::F,
         b"fe" => Effect::FontEncoding,
         b"fn" => Effect::FontName(reader.read_str()?.into()),
         b"fsc" => Effect::FontScale(reader.read_float_or_default()?),
@@ -1176,11 +1205,15 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"frx" => Effect::RotateX(reader.read_float_or_default()?),
         b"fry" => Effect::RotateY(reader.read_float_or_default()?),
         b"frz" | b"fr" => Effect::RotateZ(reader.read_float_or_default()?),
+        b"frs" => Effect::Frs(reader.read_float_or_default()?),
         b"fax" => Effect::ShearingX(reader.read_float_or_default()?),
         b"fay" => Effect::ShearingY(reader.read_float_or_default()?),
         b"fx" => Effect::Fx(reader.read_float_or_default()?),
         b"fy" => Effect::Fy(reader.read_float_or_default()?),
         b"fz" => Effect::Fz(reader.read_float_or_default()?),
+        b"fxcy" => Effect::Fxcy(reader.read_float_or_default()?),
+        b"ffrz" => Effect::Ffrz(reader.read_float_or_default()?),
+        b"fcxy" => Effect::Fcxy(reader.read_float_or_default()?),
         b"clip" | b"iclip" => { // TODO: split
             let args = parse_args_simple(reader)?;
             match args[..] {
@@ -1213,9 +1246,11 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     parse_float(x)?,
                     parse_float(y)?,
                 ),
+                // TODO ["0", "0", "0", "0"]
                 _ => unsupported_overload(name, &args)?,
             }
         }
+        b"ord" => Effect::Ord(reader.read_float_or_default()?),
         b"org" => {
             let args = parse_args_simple(reader)?;
             match args[..] {
@@ -1227,6 +1262,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             }
         }
         b"i" => Effect::Italic(reader.read_bool_or_default()?),
+        b"I" => Effect::I(reader.read_bool_or_default()?),
         b"p" => Effect::DrawScale(reader.read_float_or_default()?),
         b"pbo" => Effect::BaselineOffset(reader.read_float_or_default()?),
         b"b" => Effect::Bold(reader.read_bool_or_default()?),
@@ -1240,6 +1276,12 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
                     t2: Some(parse_float(t2)?),
                     accel: Some(parse_float(accel)?),
                     style: style.clone(),
+                },
+                [Arg::Raw(t1), Arg::Raw(t2), Arg::Effects(style1), Arg::Effects(style2)] => Effect::Transition {
+                    t1: Some(parse_float(t1)?),
+                    t2: Some(parse_float(t2)?),
+                    accel: None,
+                    style: style1.iter().chain(style2).cloned().collect(),
                 },
                 [Arg::Raw(t1), Arg::Raw(t2), Arg::Effects(style)] => Effect::Transition {
                     t1: Some(parse_float(t1)?),
@@ -1318,6 +1360,8 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         }
         b"xshad" => Effect::XShadow(reader.read_float_or_default()?),
         b"yshad" => Effect::YShadow(reader.read_float_or_default()?),
+        b"yash" => Effect::Yash(reader.read_float_or_default()?),
+        b"fsvp" => Effect::Fsvp(reader.read_float_or_default()?),
         b"q" => Effect::WrappingStyle(reader.read_integer_or_default()?),
         b"r" => Effect::Reset(None),
         b"rnd" => Effect::Rnd(reader.read_integer_or_default()?),
@@ -1346,6 +1390,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"ko" => Effect::OutlineHighlight(reader.read_integer_or_default()?),
         b"u" => Effect::Underline(reader.read_bool_or_default()?),
         b"s" => Effect::StrikeOut(reader.read_bool_or_default()?),
+        b"RemaShit" => Effect::RemaShit(),
         name if !name.is_empty() => {
             let args = if reader.peek() == Some(b'(') {
                 parse_args_simple(reader)?
@@ -1403,7 +1448,6 @@ fn parse_color(reader: &mut Reader) -> Result<Option<Color>, ParserError> {
 }
 
 fn parse_alpha(reader: &mut Reader) -> Result<Option<Alpha>, ReaderError> {
-    // reader.dbg();
     _ = reader.try_consume(b"&");
     _ = reader.try_consume(b"&");
     _ = reader.try_consume(b"H");
@@ -1419,7 +1463,7 @@ fn parse_alpha(reader: &mut Reader) -> Result<Option<Alpha>, ReaderError> {
         &[b0, b1] => Ok(Some(Alpha::Byte(parse_hex(&[b0, b1]).unwrap()))),
         &[] => Ok(None),
         value => {
-            // tracing::warn!("invalid alpha value: {:?}", value.as_bstr());
+            tracing::warn!("invalid alpha value: {:?}", value.as_bstr());
             Ok(None)
         }
     }
@@ -1437,7 +1481,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
                     }
                     Err(ParserError::MissingEffectName) => {}
                     Err(e) => {
-                        // tracing::warn!("unsupported effect: {:?}", e);
+                        tracing::warn!("unsupported effect: {:?}", e);
                     }
                 }
             }
@@ -1494,14 +1538,21 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
             }
             b'\\' => {
                 reader.expect(b'\\')?;
-                match reader.consume() {
-                    Some(b'n') => parts.push(Part::NewLine { smart_wrapping: false }),
-                    Some(b'N') => parts.push(Part::NewLine { smart_wrapping: true }),
-                    Some(b'h') => parts.push(Part::Horizontal),
-                    Some(other) => {
-                        tracing::warn!("invalid escaped char '{}'", other as char);
+                loop {
+                    match reader.consume() {
+                        Some(b'n') => parts.push(Part::NewLine { smart_wrapping: false }),
+                        Some(b'N') => parts.push(Part::NewLine { smart_wrapping: true }),
+                        Some(b'h') => parts.push(Part::Horizontal),
+                        Some(b' ') => {
+                            // ignore whitespace
+                            continue;
+                        }
+                        Some(other) => {
+                            tracing::warn!("invalid escaped char '{}'", other as char);
+                        }
+                        None => { /* ignore */ }
                     }
-                    None => { /* ignore */ }
+                    break;
                 }
             }
             _ => {

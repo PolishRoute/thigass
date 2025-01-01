@@ -53,6 +53,7 @@ impl<'buf> Reader<'buf> {
     }
 
     #[must_use]
+    #[allow(dead_code)]
     pub(crate) fn take_until(&mut self, term1: u8) -> Option<&'buf [u8]> {
         let len = memchr::memchr(term1, &self.buf[self.pos..])?;
         let slice = &self.buf[self.pos..][..len];
@@ -179,8 +180,8 @@ impl<'buf> Reader<'buf> {
 
     #[allow(unused)]
     #[track_caller]
-    fn dbg(&self) {
-        tracing::debug!("{} @ {:?}", std::panic::Location::caller(), &self.buf[self.pos..].as_bstr());
+    pub(crate) fn dbg(&self) {
+        println!("{} @ {:?}", std::panic::Location::caller(), &self.buf[self.pos..].as_bstr());
     }
 }
 
