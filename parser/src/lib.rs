@@ -1476,41 +1476,52 @@ fn parse_alpha(reader: &mut Reader) -> Result<Option<Alpha>, ReaderError> {
 }
 
 #[inline(never)]
-fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
-    let mut items = Vec::new();
-    while let Some(x) = reader.peek() {
-        match x {
-            b'\\' => {
-                match parse_effect(reader) {
-                    Ok(item) => {
-                        items.push(item);
-                    }
-                    Err(ParserError::MissingEffectName) => {}
-                    Err(e) => {
-                        tracing::warn!("unsupported effect: {:?}", e);
-                    }
-                }
-            }
-            b'}' => {
-                break;
-            }
-            b'=' => {
-                reader.expect(b'=')?;
-                let _val = reader.read_integer_or_default()?;
-                // TODO: figure out what this even means
-            }
-            _ => {
-                let comment = reader.take_until2(b'\\', b'}')
-                    .unwrap_or_else(|| reader.take_remaining());
-
-                if !comment.starts_with(b"Kara Effector 3.5") && comment != b"*" {
-                    tracing::warn!("Ignored: {}", comment.as_bstr());
-                }
+fn parse_overrides<'reader, 'source: 'reader>(
+    reader: &'reader mut Reader<'source>
+) -> impl Iterator<Item=Result<Effect, ParserError>> + use<'reader, 'source> {
+    macro_rules! unwrap {
+        ($e: expr) => {
+            match $e {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e.into())),
             }
         }
     }
 
-    Ok(items)
+    std::iter::from_fn(|| -> Option<Result<Effect, ParserError>> {
+        while let Some(x) = reader.peek() {
+            match x {
+                b'\\' => {
+                    match parse_effect(reader) {
+                        Ok(item) => {
+                            return Some(Ok(item));
+                        }
+                        Err(ParserError::MissingEffectName) => {}
+                        Err(e) => {
+                            tracing::warn!("unsupported effect: {:?}", e);
+                        }
+                    }
+                }
+                b'}' => {
+                    break;
+                }
+                b'=' => {
+                    unwrap!(reader.expect(b'='));
+                    let _val = unwrap!(reader.read_integer_or_default());
+                    // TODO: figure out what this even means
+                }
+                _ => {
+                    let comment = reader.take_until2(b'\\', b'}')
+                        .unwrap_or_else(|| reader.take_remaining());
+
+                    if !comment.starts_with(b"Kara Effector 3.5") && comment != b"*" {
+                        tracing::warn!("Ignored: {}", comment.as_bstr());
+                    }
+                }
+            }
+        }
+        None
+    })
 }
 
 #[derive(PartialEq)]
@@ -1541,13 +1552,11 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
         match c {
             b'{' => {
                 reader.expect(b'{')?;
-                let effects = parse_overrides(&mut reader)?;
-                reader.expect_or_end(b'}')?;
-                if !effects.is_empty() {
-                    for effect in effects {
-                        parts.push(Part::Override(effect));
-                    }
+                for effect in parse_overrides(&mut reader) {
+                    let effect = effect?;
+                    parts.push(Part::Override(effect));
                 }
+                reader.expect_or_end(b'}')?;
             }
             b'\\' => {
                 reader.expect(b'\\')?;
