@@ -2,6 +2,7 @@
 #![feature(slice_as_chunks)]
 #![feature(specialization)]
 #![feature(slice_split_once)]
+#![feature(gen_blocks)]
 #![deny(unsafe_code)]
 #![allow(incomplete_features)]
 
@@ -1479,22 +1480,25 @@ fn parse_alpha(reader: &mut Reader) -> Result<Option<Alpha>, ReaderError> {
 fn parse_overrides<'reader, 'source: 'reader>(
     reader: &'reader mut Reader<'source>
 ) -> impl Iterator<Item=Result<Effect, ParserError>> + use<'reader, 'source> {
-    macro_rules! unwrap {
+    macro_rules! unwrap_or_yield_and_exit {
         ($e: expr) => {
             match $e {
                 Ok(v) => v,
-                Err(e) => return Some(Err(e.into())),
+                Err(e) => {
+                    yield Err(e.into());
+                    return;
+                }
             }
         }
     }
 
-    std::iter::from_fn(|| -> Option<Result<Effect, ParserError>> {
+    gen {
         while let Some(x) = reader.peek() {
             match x {
                 b'\\' => {
                     match parse_effect(reader) {
                         Ok(item) => {
-                            return Some(Ok(item));
+                            yield Ok(item);
                         }
                         Err(ParserError::MissingEffectName) => {}
                         Err(e) => {
@@ -1506,8 +1510,8 @@ fn parse_overrides<'reader, 'source: 'reader>(
                     break;
                 }
                 b'=' => {
-                    unwrap!(reader.expect(b'='));
-                    let _val = unwrap!(reader.read_integer_or_default());
+                    unwrap_or_yield_and_exit!(reader.expect(b'='));
+                    let _val = unwrap_or_yield_and_exit!(reader.read_integer_or_default());
                     // TODO: figure out what this even means
                 }
                 _ => {
@@ -1520,8 +1524,7 @@ fn parse_overrides<'reader, 'source: 'reader>(
                 }
             }
         }
-        None
-    })
+    }
 }
 
 #[derive(PartialEq)]
