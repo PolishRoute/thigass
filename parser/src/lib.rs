@@ -970,8 +970,7 @@ fn read_point(reader: &mut Reader) -> Result<Point, ReaderError> {
     Ok(Point(x, y))
 }
 
-fn parse_args_simple<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, ReaderError> {
-    reader.expect(b'(')?;
+fn parse_simple_arg_list<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 8]>, ReaderError> {
     let mut args = ArrayVec::new();
     loop {
         let arg = match reader.peek() {
@@ -980,7 +979,7 @@ fn parse_args_simple<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[&'a BStr; 
                 continue;
             },
             Some(b')') => {
-                reader.expect(b')')?;
+                // leave consumption to the caller
                 break;
             },
             Some(b'}') => {
@@ -1018,8 +1017,7 @@ impl Default for Arg<'_> {
     }
 }
 
-fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 8]>, ParserError> {
-    reader.expect(b'(')?;
+fn parse_complex_arg_list<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 8]>, ParserError> {
     let mut args = ArrayVec::new();
     let mut is_end = false;
     while !is_end {
@@ -1029,7 +1027,7 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
                 continue;
             },
             Some(b')') => {
-                reader.expect(b')')?;
+                // leave consumption to the caller
                 is_end = true;
                 continue;
             },
@@ -1046,7 +1044,7 @@ fn parse_args_complex<'a>(reader: &mut Reader<'a>) -> Result<ArrayVec<[Arg<'a>; 
                             effects.push(parse_effect(reader)?);
                         }
                         b')' => {
-                            reader.expect(b')')?;
+                            // leave consumption to the caller
                             is_end = true;
                             break;
                         }
@@ -1184,6 +1182,8 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         None => reader.take_while(|c| c.is_ascii_alphabetic()),
     };
 
+    let with_opening_paren = reader.try_consume(b"(");
+
     let effect = match name {
         b"n" => Effect::NewLine { smart_wrapping: false },
         b"N" => Effect::NewLine { smart_wrapping: true },
@@ -1216,7 +1216,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"ffrz" => Effect::Ffrz(reader.read_float_or_default()?),
         b"fcxy" => Effect::Fcxy(reader.read_float_or_default()?),
         b"clip" | b"iclip" => { // TODO: split
-            let args = parse_args_simple(reader)?;
+            let args = parse_simple_arg_list(reader)?;
             match args[..] {
                 [] => {
                     Effect::Clip { mask: vec![], scale: 1.0 }
@@ -1241,7 +1241,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             }
         }
         b"pos" => {
-            let args = parse_args_simple(reader)?;
+            let args = parse_simple_arg_list(reader)?;
             match args[..] {
                 [x, y] => Effect::Pos(
                     parse_float(x)?,
@@ -1253,7 +1253,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         }
         b"ord" => Effect::Ord(reader.read_float_or_default()?),
         b"org" => {
-            let args = parse_args_simple(reader)?;
+            let args = parse_simple_arg_list(reader)?;
             match args[..] {
                 [x, y] => Effect::Org(
                     parse_integer(x)?,
@@ -1270,7 +1270,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"shad" => Effect::Shadow(reader.read_float_or_default()?),
         b"shadow" => Effect::Shadow(reader.read_float_or_default()?),
         b"t" => {
-            let args = parse_args_complex(reader)?;
+            let args = parse_complex_arg_list(reader)?;
             match &args[..] {
                 [Arg::Raw(t1), Arg::Raw(t2), Arg::Raw(accel), Arg::Effects(style)] => Effect::Transition {
                     t1: Some(parse_float(t1)?),
@@ -1318,7 +1318,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             }
         }
         b"fade" | b"fad" => {
-            let args = parse_args_simple(reader)?;
+            let args = parse_simple_arg_list(reader)?;
             match args[..] {
                 [a1, a2, a3, t1, t2, t3, t4] => Effect::Fade {
                     a1: parse_float(a1)?,
@@ -1338,7 +1338,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             }
         }
         b"move" => {
-            let args = parse_args_complex(reader)?;
+            let args = parse_complex_arg_list(reader)?;
             match args[..] {
                 [Arg::Raw(x1), Arg::Raw(y1), Arg::Raw(x2), Arg::Raw(y2), Arg::Raw(t1), Arg::Raw(t2)] => Effect::Move {
                     x1: parse_float(x1)?,
@@ -1394,7 +1394,7 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
         b"RemaShit" => Effect::RemaShit(),
         name if !name.is_empty() => {
             let args = if reader.peek() == Some(b'(') {
-                parse_args_simple(reader)?
+                parse_simple_arg_list(reader)?
             } else {
                 Default::default()
             };
@@ -1433,6 +1433,10 @@ fn parse_effect(reader: &mut Reader) -> Result<Effect, ParserError> {
             }
         }
     };
+
+    if with_opening_paren {
+        _ = reader.try_consume(b")");
+    }
 
     Ok(effect)
 }
@@ -1715,6 +1719,17 @@ mod tests {
         assert_eq!(&parsed[..], &[
             Part::Overrides(vec![
                 Effect::Color { index: Some(1), color: Some(Color { r: 93, g: 79, b: 42, a: 0 }) }
+            ]),
+        ]);
+    }
+
+    #[test]
+    fn unnecessary_parens() {
+        let parsed = parse(br"{\frz(346)\blur4}").unwrap();
+        assert_eq!(&parsed[..], &[
+            Part::Overrides(vec![
+                Effect::RotateZ(346.0),
+                Effect::Blur(4.0),
             ]),
         ]);
     }
