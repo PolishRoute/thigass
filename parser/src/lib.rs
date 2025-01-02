@@ -1477,9 +1477,7 @@ fn parse_alpha(reader: &mut Reader) -> Result<Option<Alpha>, ReaderError> {
 }
 
 #[inline(never)]
-fn parse_overrides<'reader, 'source: 'reader>(
-    reader: &'reader mut Reader<'source>
-) -> impl Iterator<Item=Result<Effect, ParserError>> + use<'reader, 'source> {
+fn parse_overrides(reader: &mut Reader<'_>) -> impl Iterator<Item=Result<Effect, ParserError>> {
     macro_rules! unwrap_or_yield_and_exit {
         ($e: expr) => {
             match $e {
