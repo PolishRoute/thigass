@@ -2,7 +2,7 @@
 #![allow(clippy::match_same_arms)]
 
 use bstr::ByteSlice;
-use parser::{parse, parse_curve, ParserError, Part, ReaderError, ScriptParser};
+use parser::{parse, parse_curve, ParserError, Part, Reader, ReaderError, ScriptParser};
 use std::path::Path;
 
 #[global_allocator]
@@ -54,8 +54,11 @@ fn parse_file(path: impl AsRef<Path>) -> anyhow::Result<()> {
     // let mut curves = Vec::new();
 
     for (_etype, event) in script.events.iter() {
-        let parts = parse(event.text)?;
+        let mut reader = Reader::new(&event.text);
+
+        let parts = parse(&mut reader);
         for part in parts {
+            let part = part?;
             match part {
                 Part::Text(t) => {
                     match parse_curve(t.as_bytes()) {

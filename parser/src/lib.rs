@@ -15,8 +15,7 @@ use std::str::FromStr;
 use bstr::{BStr, ByteSlice};
 use enum_map::{Enum, enum_map, EnumArray, EnumMap};
 use tinyvec::ArrayVec;
-pub use crate::reader::ReaderError;
-use crate::reader::Reader;
+pub use crate::reader::{Reader, ReaderError};
 
 #[derive(Default)]
 pub struct Timestamp {
@@ -1476,20 +1475,19 @@ fn parse_alpha(reader: &mut Reader) -> Result<Option<Alpha>, ReaderError> {
     }
 }
 
-#[inline(never)]
-fn parse_overrides(reader: &mut Reader<'_>) -> impl Iterator<Item=Result<Effect, ParserError>> {
-    macro_rules! unwrap_or_yield_and_exit {
-        ($e: expr) => {
-            match $e {
-                Ok(v) => v,
-                Err(e) => {
-                    yield Err(e.into());
-                    return;
-                }
+macro_rules! unwrap_or_yield_and_exit {
+    ($e: expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => {
+                yield Err(e.into());
+                return;
             }
         }
     }
+}
 
+fn parse_overrides(reader: &mut Reader<'_>) -> impl Iterator<Item=Result<Effect, ParserError>> {
     gen {
         while let Some(x) = reader.peek() {
             match x {
@@ -1546,63 +1544,67 @@ impl Part<'_> {
     }
 }
 
-pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
-    let mut reader = Reader::new(s);
-    let mut parts = Vec::new();
-    while let Some(c) = reader.peek() {
-        match c {
-            b'{' => {
-                reader.expect(b'{')?;
-                for effect in parse_overrides(&mut reader) {
-                    let effect = effect?;
-                    parts.push(Part::Override(effect));
-                }
-                reader.expect_or_end(b'}')?;
-            }
-            b'\\' => {
-                reader.expect(b'\\')?;
-                loop {
-                    match reader.consume() {
-                        Some(b'n') => parts.push(Part::NewLine { smart_wrapping: false }),
-                        Some(b'N') => parts.push(Part::NewLine { smart_wrapping: true }),
-                        Some(b'h') => parts.push(Part::Horizontal),
-                        Some(b' ') => {
-                            // ignore whitespace
-                            continue;
-                        }
-                        Some(other) => {
-                            tracing::warn!("invalid escaped char '{}'", other as char);
-                        }
-                        None => { /* ignore */ }
+pub fn parse<'source>(reader: &mut Reader<'source>) -> impl Iterator<Item=Result<Part<'source>, ParserError>> {
+    gen move {
+        while let Some(c) = reader.peek() {
+            match c {
+                b'{' => {
+                    unwrap_or_yield_and_exit!(reader.expect(b'{'));
+                    for effect in parse_overrides(reader) {
+                        let effect = unwrap_or_yield_and_exit!(effect);
+                        yield Ok(Part::Override(effect));
                     }
-                    break;
+                    unwrap_or_yield_and_exit!(reader.expect_or_end(b'}'));
                 }
-            }
-            _ => {
-                let s = reader.take_until2(b'{', b'\\')
-                    .unwrap_or_else(|| reader.take_remaining());
-                if s.len() > 0 {
-                    parts.push(Part::Text(s.as_bstr()));
+                b'\\' => {
+                    unwrap_or_yield_and_exit!(reader.expect(b'\\'));
+                    loop {
+                        match reader.consume() {
+                            Some(b'n') => yield Ok(Part::NewLine { smart_wrapping: false }),
+                            Some(b'N') => yield Ok(Part::NewLine { smart_wrapping: true }),
+                            Some(b'h') => yield Ok(Part::Horizontal),
+                            Some(b' ') => {
+                                // ignore whitespace
+                                continue;
+                            }
+                            Some(other) => {
+                                tracing::warn!("invalid escaped char '{}'", other as char);
+                            }
+                            None => { /* ignore */ }
+                        }
+                        break;
+                    }
+                }
+                _ => {
+                    let s = reader.take_until2(b'{', b'\\')
+                        .unwrap_or_else(|| reader.take_remaining());
+                    if s.len() > 0 {
+                        yield Ok(Part::Text(s.as_bstr()));
+                    }
                 }
             }
         }
     }
-    Ok(parts)
 }
 
 #[cfg(test)]
 mod tests {
     use bstr::ByteSlice;
-    use crate::{parse, Alignment, Color, DrawCommand, Effect, Part, Point, Timestamp};
+    use crate::{parse, Alignment, Color, DrawCommand, Effect, Part, Point, Reader, Timestamp};
 
     #[test]
     fn parse_timestamp() {
         assert_eq!(format!("{:?}", "0:13:57.35".parse::<Timestamp>().unwrap()), "0:13:57.35");
     }
 
+    fn parse_into_vec(s: &[u8]) -> Vec<Part<'_>> {
+        let mut reader = Reader::new(s);
+        parse(&mut reader).collect::<Result<Vec<_>, _>>().unwrap()
+    }
+
     #[test]
     fn simple_parse() {
-        let parsed = parse(br"{\fs16}This is small text. {\fs28}This is\n large text").unwrap();
+        let parsed = parse_into_vec(br"{\fs16}This is small text. {\fs28}This is\n large text");
         assert_eq!(&parsed[..], &[
             Part::Override(Effect::FontSize(16.0)),
             Part::Text(b"This is small text. ".as_bstr()),
@@ -1615,7 +1617,7 @@ mod tests {
 
     #[test]
     fn more_complex() {
-        let parsed = parse(br"{\an7\blur4\fscx50\frz14.5\fax0.27\c&H303587&\pos(118.73,1232.33)\p1\fscy50\clip(m 549 1080 l 422 876 759 791 980 735 b 1028 724 1054 712 1059 696 l 1281 1080)\t(1740,2140,1,\blur1)}m 1859.05 -127.72 b 1859.79 -128.1 1860.54 -128.48 1861.29 -128.86 1861.64 -128.83 1862 -128.79 1862.36 -128.74 1862.69 -128.38 1863.01 -128.02 1863.34 -127.66 1862.92 -127.2 1862.51 -126.74 1862.09 -126.28 1861.08 -126.76 1860.06 -127.24 1859.05 -127.72").unwrap();
+        let parsed = parse_into_vec(br"{\an7\blur4\fscx50\frz14.5\fax0.27\c&H303587&\pos(118.73,1232.33)\p1\fscy50\clip(m 549 1080 l 422 876 759 791 980 735 b 1028 724 1054 712 1059 696 l 1281 1080)\t(1740,2140,1,\blur1)}m 1859.05 -127.72 b 1859.79 -128.1 1860.54 -128.48 1861.29 -128.86 1861.64 -128.83 1862 -128.79 1862.36 -128.74 1862.69 -128.38 1863.01 -128.02 1863.34 -127.66 1862.92 -127.2 1862.51 -126.74 1862.09 -126.28 1861.08 -126.76 1860.06 -127.24 1859.05 -127.72");
         assert_eq!(&parsed[..], &[
             Part::Override(Effect::Align(Alignment(7))),
             Part::Override(Effect::Blur(4.0)),
@@ -1648,7 +1650,7 @@ mod tests {
 
     #[test]
     fn transition_with_overrides() {
-        let parsed = parse(br"{\t(540,540,\blur0.9)}").unwrap();
+        let parsed = parse_into_vec(br"{\t(540,540,\blur0.9)}");
         assert_eq!(&parsed[..], &[
             Part::Override(Effect::Transition {
                 t1: Some(540.0),
@@ -1663,7 +1665,7 @@ mod tests {
 
     #[test]
     fn unterminated_simple_args() {
-        let parsed = parse(br"{\fad(200,200}{\pos(355,484)}Terminal Colony Number 8 - Shirahime").unwrap();
+        let parsed = parse_into_vec(br"{\fad(200,200}{\pos(355,484)}Terminal Colony Number 8 - Shirahime");
         assert_eq!(&parsed[..], &[
             Part::Override(Effect::FadeAlpha {
                 t1: 200.0,
@@ -1676,7 +1678,7 @@ mod tests {
 
     #[test]
     fn unexpected_escape_sequence() {
-        let parsed = parse(br"{\fad(250,250\)}Now, count up your sins").unwrap();
+        let parsed = parse_into_vec(br"{\fad(250,250\)}Now, count up your sins");
         assert_eq!(&parsed[..], &[
             Part::Override(Effect::FadeAlpha {
                 t1: 250.0,
@@ -1688,7 +1690,7 @@ mod tests {
 
     #[test]
     fn override_with_common_prefix() {
-        let parsed = parse(br"{\r\rnd123}").unwrap();
+        let parsed = parse_into_vec(br"{\r\rnd123}");
         assert_eq!(&parsed[..], &[
             Part::Override(Effect::Reset(None)),
             Part::Override(Effect::Rnd(123)),
@@ -1697,7 +1699,7 @@ mod tests {
 
     #[test]
     fn stray_closing_paren() {
-        let parsed = parse(br"{\pos(1122.29,189.87)\3c&H5DC4EC&}by an \NElite").unwrap();
+        let parsed = parse_into_vec(br"{\pos(1122.29,189.87)\3c&H5DC4EC&}by an \NElite");
         assert_eq!(&parsed[..], &[
             Part::Override(Effect::Pos(1122.29, 189.87)),
             Part::Override(Effect::Color { index: Some(3), color: Some(Color { r: 236, g: 196, b: 93, a: 0 }) }),
@@ -1709,7 +1711,7 @@ mod tests {
 
     #[test]
     fn colors() {
-        let parsed = parse(br"{\1cH&H2A4F5D}").unwrap();
+        let parsed = parse_into_vec(br"{\1cH&H2A4F5D}");
         assert_eq!(&parsed[..], &[
             Part::Override(Effect::Color { index: Some(1), color: Some(Color { r: 93, g: 79, b: 42, a: 0 }) }),
         ]);
@@ -1717,7 +1719,7 @@ mod tests {
 
     #[test]
     fn unnecessary_parens() {
-        let parsed = parse(br"{\frz(346)\blur4}").unwrap();
+        let parsed = parse_into_vec(br"{\frz(346)\blur4}");
         assert_eq!(&parsed[..], &[
             Part::Override(Effect::RotateZ(346.0)),
             Part::Override(Effect::Blur(4.0)),

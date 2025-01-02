@@ -1,12 +1,12 @@
 use bstr::ByteSlice;
 
-pub(crate) struct Reader<'d> {
+pub struct Reader<'d> {
     buf: &'d [u8],
     pos: usize,
 }
 
 impl<'buf> Reader<'buf> {
-    pub(crate) fn new(input: &'buf [u8]) -> Reader<'buf> {
+    pub fn new(input: &'buf [u8]) -> Reader<'buf> {
         Self {
             buf: input,
             pos: 0,
