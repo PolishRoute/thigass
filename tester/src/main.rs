@@ -68,7 +68,7 @@ fn parse_file(path: impl AsRef<Path>) -> anyhow::Result<()> {
                         Err(e) => panic!("{}: {:?}", t, e),
                     }
                 }
-                Part::Overrides(_) => {}
+                Part::Override(_) => {}
                 Part::NewLine { .. } => {}
                 Part::Horizontal => {}
             }

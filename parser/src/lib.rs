@@ -1517,7 +1517,7 @@ fn parse_overrides(reader: &mut Reader) -> Result<Vec<Effect>, ParserError> {
 #[derive(Debug)]
 pub enum Part<'s> {
     Text(&'s BStr),
-    Overrides(Vec<Effect>),
+    Override(Effect),
     NewLine { smart_wrapping: bool },
     Horizontal,
 }
@@ -1528,7 +1528,7 @@ impl Part<'_> {
         match self {
             Part::Text(s) => Some(s),
             Part::NewLine { .. } => Some(b"\n".as_bstr()),
-            Part::Overrides(_) => None,
+            Part::Override(_) => None,
             Part::Horizontal => None,
         }
     }
@@ -1544,7 +1544,9 @@ pub fn parse(s: &[u8]) -> Result<Vec<Part>, ParserError> {
                 let effects = parse_overrides(&mut reader)?;
                 reader.expect_or_end(b'}')?;
                 if !effects.is_empty() {
-                    parts.push(Part::Overrides(effects));
+                    for effect in effects {
+                        parts.push(Part::Override(effect));
+                    }
                 }
             }
             b'\\' => {
@@ -1592,13 +1594,9 @@ mod tests {
     fn simple_parse() {
         let parsed = parse(br"{\fs16}This is small text. {\fs28}This is\n large text").unwrap();
         assert_eq!(&parsed[..], &[
-            Part::Overrides(vec![
-                Effect::FontSize(16.0),
-            ]),
+            Part::Override(Effect::FontSize(16.0)),
             Part::Text(b"This is small text. ".as_bstr()),
-            Part::Overrides(vec![
-                Effect::FontSize(28.0),
-            ]),
+            Part::Override(Effect::FontSize(28.0)),
             Part::Text(b"This is".as_bstr()),
             Part::NewLine { smart_wrapping: false },
             Part::Text(b" large text".as_bstr()),
@@ -1609,33 +1607,31 @@ mod tests {
     fn more_complex() {
         let parsed = parse(br"{\an7\blur4\fscx50\frz14.5\fax0.27\c&H303587&\pos(118.73,1232.33)\p1\fscy50\clip(m 549 1080 l 422 876 759 791 980 735 b 1028 724 1054 712 1059 696 l 1281 1080)\t(1740,2140,1,\blur1)}m 1859.05 -127.72 b 1859.79 -128.1 1860.54 -128.48 1861.29 -128.86 1861.64 -128.83 1862 -128.79 1862.36 -128.74 1862.69 -128.38 1863.01 -128.02 1863.34 -127.66 1862.92 -127.2 1862.51 -126.74 1862.09 -126.28 1861.08 -126.76 1860.06 -127.24 1859.05 -127.72").unwrap();
         assert_eq!(&parsed[..], &[
-            Part::Overrides(vec![
-                Effect::Align(Alignment(7)),
-                Effect::Blur(4.0),
-                Effect::FontScaleX(50.0),
-                Effect::RotateZ(14.5),
-                Effect::ShearingX(0.27),
-                Effect::Color { index: None, color: Some(Color { r: 135, g: 53, b: 48, a: 0 }) },
-                Effect::Pos(118.73, 1232.33),
-                Effect::DrawScale(1.0),
-                Effect::FontScaleY(50.0),
-                Effect::Clip { mask: vec![
-                    DrawCommand::Close,
-                    DrawCommand::Move(Point(549.0, 1080.0)),
-                    DrawCommand::Line(Point(422.0, 876.0)),
-                    DrawCommand::Line(Point(759.0, 791.0)),
-                    DrawCommand::Line(Point(980.0, 735.0)),
-                    DrawCommand::Bezier([
-                        Point(1028.0, 724.0),
-                        Point(1054.0, 712.0),
-                        Point(1059.0, 696.0),
-                    ]),
-                    DrawCommand::Line(Point(1281.0, 1080.0)),
-                ], scale: 1.0 },
-                Effect::Transition { t1: Some(1740.0), t2: Some(2140.0), accel: Some(1.0), style: vec![
-                    Effect::Blur(1.0)
-                ] },
-            ]),
+            Part::Override(Effect::Align(Alignment(7))),
+            Part::Override(Effect::Blur(4.0)),
+            Part::Override(Effect::FontScaleX(50.0)),
+            Part::Override(Effect::RotateZ(14.5)),
+            Part::Override(Effect::ShearingX(0.27)),
+            Part::Override(Effect::Color { index: None, color: Some(Color { r: 135, g: 53, b: 48, a: 0 }) }),
+            Part::Override(Effect::Pos(118.73, 1232.33)),
+            Part::Override(Effect::DrawScale(1.0)),
+            Part::Override(Effect::FontScaleY(50.0)),
+            Part::Override(Effect::Clip { mask: vec![
+                DrawCommand::Close,
+                DrawCommand::Move(Point(549.0, 1080.0)),
+                DrawCommand::Line(Point(422.0, 876.0)),
+                DrawCommand::Line(Point(759.0, 791.0)),
+                DrawCommand::Line(Point(980.0, 735.0)),
+                DrawCommand::Bezier([
+                    Point(1028.0, 724.0),
+                    Point(1054.0, 712.0),
+                    Point(1059.0, 696.0),
+                ]),
+                DrawCommand::Line(Point(1281.0, 1080.0)),
+            ], scale: 1.0 }),
+            Part::Override(Effect::Transition { t1: Some(1740.0), t2: Some(2140.0), accel: Some(1.0), style: vec![
+                Effect::Blur(1.0)
+            ] }),
             Part::Text(b"m 1859.05 -127.72 b 1859.79 -128.1 1860.54 -128.48 1861.29 -128.86 1861.64 -128.83 1862 -128.79 1862.36 -128.74 1862.69 -128.38 1863.01 -128.02 1863.34 -127.66 1862.92 -127.2 1862.51 -126.74 1862.09 -126.28 1861.08 -126.76 1860.06 -127.24 1859.05 -127.72".as_bstr())
         ]);
     }
@@ -1644,16 +1640,14 @@ mod tests {
     fn transition_with_overrides() {
         let parsed = parse(br"{\t(540,540,\blur0.9)}").unwrap();
         assert_eq!(&parsed[..], &[
-            Part::Overrides(vec![
-                Effect::Transition {
-                    t1: Some(540.0),
-                    t2: Some(540.0),
-                    accel: None,
-                    style: vec![
-                        Effect::Blur(0.9),
-                    ],
-                },
-            ]),
+            Part::Override(Effect::Transition {
+                t1: Some(540.0),
+                t2: Some(540.0),
+                accel: None,
+                style: vec![
+                    Effect::Blur(0.9),
+                ],
+            }),
         ]);
     }
 
@@ -1661,15 +1655,11 @@ mod tests {
     fn unterminated_simple_args() {
         let parsed = parse(br"{\fad(200,200}{\pos(355,484)}Terminal Colony Number 8 - Shirahime").unwrap();
         assert_eq!(&parsed[..], &[
-            Part::Overrides(vec![
-                Effect::FadeAlpha {
-                    t1: 200.0,
-                    t2: 200.0,
-                },
-            ]),
-            Part::Overrides(vec![
-                Effect::Pos(355.0, 484.0),
-            ]),
+            Part::Override(Effect::FadeAlpha {
+                t1: 200.0,
+                t2: 200.0,
+            }),
+            Part::Override(Effect::Pos(355.0, 484.0)),
             Part::Text(b"Terminal Colony Number 8 - Shirahime".as_bstr()),
         ]);
     }
@@ -1678,12 +1668,10 @@ mod tests {
     fn unexpected_escape_sequence() {
         let parsed = parse(br"{\fad(250,250\)}Now, count up your sins").unwrap();
         assert_eq!(&parsed[..], &[
-            Part::Overrides(vec![
-                Effect::FadeAlpha {
-                    t1: 250.0,
-                    t2: 250.0,
-                },
-            ]),
+            Part::Override(Effect::FadeAlpha {
+                t1: 250.0,
+                t2: 250.0,
+            }),
             Part::Text(b"Now, count up your sins".as_bstr()),
         ]);
     }
@@ -1692,10 +1680,8 @@ mod tests {
     fn override_with_common_prefix() {
         let parsed = parse(br"{\r\rnd123}").unwrap();
         assert_eq!(&parsed[..], &[
-            Part::Overrides(vec![
-                Effect::Reset(None),
-                Effect::Rnd(123),
-            ]),
+            Part::Override(Effect::Reset(None)),
+            Part::Override(Effect::Rnd(123)),
         ]);
     }
 
@@ -1703,10 +1689,8 @@ mod tests {
     fn stray_closing_paren() {
         let parsed = parse(br"{\pos(1122.29,189.87)\3c&H5DC4EC&}by an \NElite").unwrap();
         assert_eq!(&parsed[..], &[
-            Part::Overrides(vec![
-                Effect::Pos(1122.29, 189.87),
-                Effect::Color { index: Some(3), color: Some(Color { r: 236, g: 196, b: 93, a: 0 }) }
-            ]),
+            Part::Override(Effect::Pos(1122.29, 189.87)),
+            Part::Override(Effect::Color { index: Some(3), color: Some(Color { r: 236, g: 196, b: 93, a: 0 }) }),
             Part::Text(b"by an ".as_bstr()),
             Part::NewLine { smart_wrapping: true },
             Part::Text(b"Elite".as_bstr()),
@@ -1717,9 +1701,7 @@ mod tests {
     fn colors() {
         let parsed = parse(br"{\1cH&H2A4F5D}").unwrap();
         assert_eq!(&parsed[..], &[
-            Part::Overrides(vec![
-                Effect::Color { index: Some(1), color: Some(Color { r: 93, g: 79, b: 42, a: 0 }) }
-            ]),
+            Part::Override(Effect::Color { index: Some(1), color: Some(Color { r: 93, g: 79, b: 42, a: 0 }) }),
         ]);
     }
 
@@ -1727,10 +1709,8 @@ mod tests {
     fn unnecessary_parens() {
         let parsed = parse(br"{\frz(346)\blur4}").unwrap();
         assert_eq!(&parsed[..], &[
-            Part::Overrides(vec![
-                Effect::RotateZ(346.0),
-                Effect::Blur(4.0),
-            ]),
+            Part::Override(Effect::RotateZ(346.0)),
+            Part::Override(Effect::Blur(4.0)),
         ]);
     }
 }
