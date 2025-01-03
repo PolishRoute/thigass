@@ -17,6 +17,18 @@ use enum_map::{Enum, enum_map, EnumArray, EnumMap};
 use tinyvec::ArrayVec;
 pub use crate::reader::{Reader, ReaderError};
 
+macro_rules! unwrap_or_yield_and_exit {
+    ($e: expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => {
+                yield Err(e.into());
+                return;
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Timestamp {
     value: u64,
@@ -1471,18 +1483,6 @@ fn parse_alpha(reader: &mut Reader) -> Result<Option<Alpha>, ReaderError> {
         value => {
             tracing::warn!("invalid alpha value: {:?}", value.as_bstr());
             Ok(None)
-        }
-    }
-}
-
-macro_rules! unwrap_or_yield_and_exit {
-    ($e: expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(e) => {
-                yield Err(e.into());
-                return;
-            }
         }
     }
 }
